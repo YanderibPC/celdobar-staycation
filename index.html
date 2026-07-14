@@ -149,9 +149,15 @@
   .b-card .stats{ margin-top:12px; display:flex; gap:16px; font-size:12.5px; }
   .b-card .stats b{ display:block; font-family:'IBM Plex Mono',monospace; font-size:14px; }
 
-  .unit-row{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--line); }
+  .unit-row{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; gap:8px; }
   .unit-row:last-child{ border-bottom:none; }
   .unit-left{ display:flex; align-items:center; gap:10px; }
+  .unit-metrics{ display:flex; gap:22px; align-items:center; flex-wrap:wrap; }
+  .unit-metrics .m{ text-align:right; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.3px; }
+  .unit-metrics .m b{ display:block; font-family:'IBM Plex Mono',monospace; font-size:13.5px; color:var(--ink); margin-top:2px; font-weight:600; text-transform:none; letter-spacing:0; }
+  .unit-actions{ display:flex; gap:4px; }
+  .b-card-actions{ position:absolute; top:14px; right:14px; display:flex; gap:2px; opacity:0; transition:opacity .12s ease; }
+  .b-card:hover .b-card-actions{ opacity:1; }
 
   /* ---------- Modal ---------- */
   .overlay{ position:fixed; inset:0; background:rgba(20,24,20,.45); display:none; align-items:center; justify-content:center; z-index:100; padding:16px;}
@@ -233,6 +239,29 @@
         </div>
       </div>
 
+      <div class="flex-between section-gap" style="margin-top:0;">
+        <h2 style="font-size:17px;margin:0;">Per-Unit Breakdown</h2>
+        <span class="page-sub" id="perUnitSub" style="margin:0;">Reflects the filters above</span>
+      </div>
+      <div class="card" style="margin-bottom:20px;">
+        <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Unit</th><th>Building</th>
+            <th class="amt">Gross Income</th><th class="amt">Expenses</th><th class="amt">Net Income</th><th class="amt">Margin</th>
+          </tr></thead>
+          <tbody id="perUnitBody"></tbody>
+        </table>
+        </div>
+        <div id="perUnitEmpty" class="empty" style="display:none;">
+          <div class="em-icon">📊</div>
+          No unit activity in this range yet.
+        </div>
+      </div>
+
+      <div class="flex-between">
+        <h2 style="font-size:17px;margin:0;">Transactions</h2>
+      </div>
       <div class="card">
         <div class="table-wrap">
         <table>
@@ -262,7 +291,7 @@
     <!-- UNITS -->
     <section id="view-units" style="display:none;">
       <div class="page-head">
-        <div><h1>Units</h1><p class="page-sub">Every listing, grouped by building.</p></div>
+        <div><h1>Units</h1><p class="page-sub">Every listing, grouped by building — income, expense, net and margin, all-time.</p></div>
         <button class="btn primary" id="btnAddUnit">+ Add Unit</button>
       </div>
       <div id="unitsList"></div>
@@ -339,31 +368,35 @@
   </div>
 </div>
 
-<!-- MODAL: Add Building -->
+<!-- MODAL: Add/Edit Building -->
 <div class="overlay" id="modalBuilding">
   <div class="modal">
-    <h2>Add Building</h2>
+    <h2 id="buildingModalTitle">Add Building</h2>
     <p class="modal-sub">A property you operate units in.</p>
     <div class="field"><label>Building Name</label><input type="text" id="bName" placeholder="e.g. Beacon"></div>
     <div class="field"><label>Notes (optional)</label><textarea id="bNotes" rows="2"></textarea></div>
+    <input type="hidden" id="bId">
     <div class="modal-foot">
       <button class="btn ghost" id="bCancel">Cancel</button>
+      <button class="btn danger" id="bDelete" style="display:none;">Delete</button>
       <button class="btn primary" id="bSave">Add Building</button>
     </div>
   </div>
 </div>
 
-<!-- MODAL: Add Unit -->
+<!-- MODAL: Add/Edit Unit -->
 <div class="overlay" id="modalUnit">
   <div class="modal">
-    <h2>Add Unit</h2>
+    <h2 id="unitModalTitle">Add Unit</h2>
     <p class="modal-sub">A listing inside one of your buildings.</p>
     <div class="field"><label>Unit Code / Name</label><input type="text" id="uName" placeholder="e.g. 3715"></div>
     <div class="field"><label>Building</label><select id="uBuilding"></select></div>
     <div class="field"><label>Status</label><select id="uStatus"><option>Active</option><option>Inactive</option></select></div>
     <div class="field"><label>Notes (optional)</label><textarea id="uNotes" rows="2"></textarea></div>
+    <input type="hidden" id="uId">
     <div class="modal-foot">
       <button class="btn ghost" id="uCancel">Cancel</button>
+      <button class="btn danger" id="uDelete" style="display:none;">Delete</button>
       <button class="btn primary" id="uSave">Add Unit</button>
     </div>
   </div>
@@ -512,6 +545,8 @@ function renderDashboard(){
   $('kpiExpenseSub').textContent = entries.filter(e=>e.type==='Expense').length + ' expense entries';
   $('kpiNetSub').textContent = net>=0 ? 'Profitable' : 'Operating at a loss';
 
+  renderPerUnit(entries);
+
   const body = $('entriesBody');
   if (!entries.length){
     body.innerHTML = ''; $('entriesEmpty').style.display='block';
@@ -537,6 +572,42 @@ function renderDashboard(){
   }
 }
 
+function renderPerUnit(entries){
+  const byUnit = {};
+  entries.forEach(e=>{
+    if (!byUnit[e.unitId]) byUnit[e.unitId] = { gross:0, expense:0 };
+    if (e.type==='Income') byUnit[e.unitId].gross += Number(e.amount)||0;
+    else byUnit[e.unitId].expense += Number(e.amount)||0;
+  });
+  const rows = Object.keys(byUnit).map(unitId=>{
+    const unit = unitById(unitId);
+    const bld = unit ? buildingById(unit.buildingId) : null;
+    const { gross, expense } = byUnit[unitId];
+    const net = gross - expense;
+    const margin = gross ? (net/gross*100) : 0;
+    return { unitId, unitName: unit? unit.name : '(deleted unit)', buildingName: bld? bld.name : '—',
+              buildingId: bld? bld.id : null, gross, expense, net, margin };
+  }).sort((a,b)=> b.net - a.net);
+
+  const body = $('perUnitBody');
+  if (!rows.length){
+    body.innerHTML = ''; $('perUnitEmpty').style.display = 'block';
+  } else {
+    $('perUnitEmpty').style.display = 'none';
+    body.innerHTML = rows.map(r=>{
+      const col = r.buildingId ? buildingColor[r.buildingId] : null;
+      return `<tr>
+        <td><b>${r.unitName}</b></td>
+        <td>${col ? `<span class="b-chip" style="background:${col.dim};color:${col.color}"><span class="b-dot" style="background:${col.color}"></span>${r.buildingName}</span>` : r.buildingName}</td>
+        <td class="amt num" style="color:var(--primary)">${fmtPHP(r.gross)}</td>
+        <td class="amt num" style="color:var(--expense)">${fmtPHP(r.expense)}</td>
+        <td class="amt num" style="color:${r.net>=0?'var(--primary)':'var(--negative)'}">${fmtPHP(r.net)}</td>
+        <td class="amt num">${r.gross? r.margin.toFixed(1):'0.0'}%</td>
+      </tr>`;
+    }).join('');
+  }
+}
+
 function renderBuildings(){
   const grid = $('buildingsGrid');
   if (!state.buildings.length){ grid.innerHTML = `<div class="empty" style="grid-column:1/-1">No buildings yet — add your first one.</div>`; return; }
@@ -548,6 +619,10 @@ function renderBuildings(){
     const net = gross-expense;
     const col = buildingColor[b.id];
     return `<div class="card b-card" style="border-left-color:${col?col.color:'var(--primary)'}">
+      <div class="b-card-actions">
+        <button class="icon-btn" title="Edit building" onclick="openBuildingModal('${b.id}')">✎</button>
+        <button class="icon-btn" title="Delete building" onclick="deleteBuilding('${b.id}')">🗑</button>
+      </div>
       <h3>${b.name}</h3>
       <div class="meta">${units.length} unit${units.length===1?'':'s'}${b.notes? ' · '+b.notes : ''}</div>
       <div class="stats">
@@ -571,12 +646,22 @@ function renderUnits(){
         let gross=0, expense=0;
         entries.forEach(e=>{ if(e.type==='Income') gross+=Number(e.amount)||0; else expense+=Number(e.amount)||0; });
         const net = gross-expense;
+        const margin = gross ? (net/gross*100) : 0;
         return `<div class="unit-row">
           <div class="unit-left">
             <span class="chip" style="background:${col?col.dim:'#eee'};color:${col?col.color:'#555'}">${u.status||'Active'}</span>
             <b>${u.name}</b>
           </div>
-          <div class="num" style="color:${net>=0?'var(--primary)':'var(--negative)'}">${fmtPHP(net)} net</div>
+          <div style="display:flex;gap:18px;align-items:baseline;">
+            <div class="num" style="font-size:12px;color:var(--muted);">Gross <b style="color:var(--ink);font-size:13px;">${fmtPHP(gross)}</b></div>
+            <div class="num" style="font-size:12px;color:var(--muted);">Exp <b style="color:var(--expense);font-size:13px;">${fmtPHP(expense)}</b></div>
+            <div class="num" style="font-size:12px;color:var(--muted);">Net <b style="color:${net>=0?'var(--primary)':'var(--negative)'};font-size:13px;">${fmtPHP(net)}</b></div>
+            <div class="num" style="font-size:12px;color:var(--muted);">Margin <b style="color:var(--ink);font-size:13px;">${gross?margin.toFixed(1):'0.0'}%</b></div>
+          </div>
+          <div class="row-actions">
+            <button class="icon-btn" title="Edit unit" onclick="openUnitModal('${u.id}')">✎</button>
+            <button class="icon-btn" title="Delete unit" onclick="deleteUnit('${u.id}')">🗑</button>
+          </div>
         </div>`;
       }).join('') : `<div style="padding:12px 16px 16px;color:var(--muted);font-size:13px;">No units yet in this building.</div>`}
     </div>`;
@@ -656,39 +741,105 @@ async function deleteEntry(id){
 }
 
 /* ---------------- Building modal ---------------- */
-$('btnAddBuilding').addEventListener('click', ()=>{
-  $('bName').value=''; $('bNotes').value='';
+function openBuildingModal(buildingId){
+  const isEdit = !!buildingId;
+  $('buildingModalTitle').textContent = isEdit ? 'Edit Building' : 'Add Building';
+  $('bSave').textContent = isEdit ? 'Save Changes' : 'Add Building';
+  $('bDelete').style.display = isEdit ? 'inline-flex' : 'none';
+  if (isEdit){
+    const b = buildingById(buildingId);
+    $('bId').value = b.id; $('bName').value = b.name; $('bNotes').value = b.notes || '';
+  } else {
+    $('bId').value = ''; $('bName').value = ''; $('bNotes').value = '';
+  }
   $('modalBuilding').classList.add('open');
-});
+}
+$('btnAddBuilding').addEventListener('click', ()=> openBuildingModal());
 $('bCancel').addEventListener('click', ()=> $('modalBuilding').classList.remove('open'));
 $('bSave').addEventListener('click', async ()=>{
   const name = $('bName').value.trim();
   if (!name){ toast('Name your building first.'); return; }
-  await apiPost('addBuilding', { name, notes: $('bNotes').value });
+  const id = $('bId').value;
+  $('bSave').disabled = true;
+  try{
+    if (id){ await apiPost('updateBuilding', { id, name, notes: $('bNotes').value }); toast('Building updated'); }
+    else{ await apiPost('addBuilding', { name, notes: $('bNotes').value }); toast('Building added'); }
+    $('modalBuilding').classList.remove('open');
+    await loadAll();
+  }catch(err){ toast('Error saving building'); }
+  $('bSave').disabled = false;
+});
+$('bDelete').addEventListener('click', async ()=>{
+  const id = $('bId').value;
+  const units = state.units.filter(u=>u.buildingId===id);
+  if (units.length){ toast(`Move or delete its ${units.length} unit(s) first.`); return; }
+  if (!confirm('Delete this building? This cannot be undone.')) return;
+  await apiPost('deleteBuilding', { id });
   $('modalBuilding').classList.remove('open');
-  toast('Building added');
+  toast('Building deleted');
   await loadAll();
 });
+async function deleteBuilding(id){
+  const units = state.units.filter(u=>u.buildingId===id);
+  if (units.length){ toast(`This building has ${units.length} unit(s) — move or delete them first.`); return; }
+  if (!confirm('Delete this building? This cannot be undone.')) return;
+  await apiPost('deleteBuilding', { id });
+  toast('Building deleted');
+  await loadAll();
+}
 
 /* ---------------- Unit modal ---------------- */
 function renderUnitModalOptions(){
   $('uBuilding').innerHTML = state.buildings.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
 }
-$('btnAddUnit').addEventListener('click', ()=>{
+function openUnitModal(unitId){
   if (!state.buildings.length){ toast('Add a building first.'); return; }
-  $('uName').value=''; $('uNotes').value=''; $('uStatus').value='Active';
   renderUnitModalOptions();
+  const isEdit = !!unitId;
+  $('unitModalTitle').textContent = isEdit ? 'Edit Unit' : 'Add Unit';
+  $('uSave').textContent = isEdit ? 'Save Changes' : 'Add Unit';
+  $('uDelete').style.display = isEdit ? 'inline-flex' : 'none';
+  if (isEdit){
+    const u = unitById(unitId);
+    $('uId').value = u.id; $('uName').value = u.name; $('uBuilding').value = u.buildingId;
+    $('uStatus').value = u.status || 'Active'; $('uNotes').value = u.notes || '';
+  } else {
+    $('uId').value = ''; $('uName').value = ''; $('uNotes').value = ''; $('uStatus').value = 'Active';
+  }
   $('modalUnit').classList.add('open');
-});
+}
+$('btnAddUnit').addEventListener('click', ()=> openUnitModal());
 $('uCancel').addEventListener('click', ()=> $('modalUnit').classList.remove('open'));
 $('uSave').addEventListener('click', async ()=>{
   const name = $('uName').value.trim();
   if (!name){ toast('Name the unit first.'); return; }
-  await apiPost('addUnit', { name, buildingId: $('uBuilding').value, status: $('uStatus').value, notes: $('uNotes').value });
-  $('modalUnit').classList.remove('open');
-  toast('Unit added');
-  await loadAll();
+  const id = $('uId').value;
+  const payload = { name, buildingId: $('uBuilding').value, status: $('uStatus').value, notes: $('uNotes').value };
+  $('uSave').disabled = true;
+  try{
+    if (id){ payload.id = id; await apiPost('updateUnit', payload); toast('Unit updated'); }
+    else{ await apiPost('addUnit', payload); toast('Unit added'); }
+    $('modalUnit').classList.remove('open');
+    await loadAll();
+  }catch(err){ toast('Error saving unit'); }
+  $('uSave').disabled = false;
 });
+$('uDelete').addEventListener('click', async ()=>{
+  const id = $('uId').value;
+  await confirmAndDeleteUnit(id);
+  $('modalUnit').classList.remove('open');
+});
+async function deleteUnit(id){ await confirmAndDeleteUnit(id); }
+async function confirmAndDeleteUnit(id){
+  const entryCount = state.entries.filter(e=>e.unitId===id).length;
+  const msg = entryCount
+    ? `This unit has ${entryCount} entr${entryCount===1?'y':'ies'} logged against it. Delete it anyway? The entries will stay in the sheet but won't be linked to a unit.`
+    : 'Delete this unit? This cannot be undone.';
+  if (!confirm(msg)) return;
+  await apiPost('deleteUnit', { id });
+  toast('Unit deleted');
+  await loadAll();
+}
 
 /* ---------------- Reports ---------------- */
 function populateYearOptions(){
