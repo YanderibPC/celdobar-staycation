@@ -158,6 +158,17 @@
   .unit-actions{ display:flex; gap:4px; }
   .b-card-actions{ position:absolute; top:14px; right:14px; display:flex; gap:2px; opacity:0; transition:opacity .12s ease; }
   .b-card:hover .b-card-actions{ opacity:1; }
+  .status-tabs{ display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+  .status-tab{ border:1px solid var(--line); background:#fff; color:var(--muted); font-size:12.5px; font-weight:600;
+    padding:6px 13px; border-radius:20px; cursor:pointer; }
+  .status-tab.active{ background:var(--ink); color:#fff; border-color:var(--ink); }
+  .status-tab-hint{ font-size:12px; color:var(--faint); margin-left:6px; }
+  .status-pill{ display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:20px; font-size:11.5px; font-weight:600;
+    cursor:pointer; border:none; }
+  .status-pill.is-active{ background:var(--primary-dim); color:var(--primary); }
+  .status-pill.is-inactive{ background:#EEEFEA; color:var(--faint); }
+  .status-pill:hover{ filter:brightness(.95); }
+  .unit-row.inactive{ opacity:.62; }
 
   /* ---------- Modal ---------- */
   .overlay{ position:fixed; inset:0; background:rgba(20,24,20,.45); display:none; align-items:center; justify-content:center; z-index:100; padding:16px;}
@@ -293,6 +304,12 @@
       <div class="page-head">
         <div><h1>Units</h1><p class="page-sub">Every listing, grouped by building — income, expense, net and margin, all-time.</p></div>
         <button class="btn primary" id="btnAddUnit">+ Add Unit</button>
+      </div>
+      <div class="status-tabs">
+        <button class="status-tab active" data-status="">All</button>
+        <button class="status-tab" data-status="Active">Active</button>
+        <button class="status-tab" data-status="Inactive">Inactive</button>
+        <span class="status-tab-hint">Click a unit's status pill to toggle it Active / Inactive.</span>
       </div>
       <div id="unitsList"></div>
     </section>
@@ -508,7 +525,7 @@ function renderFilterOptions(){
 function updateUnitFilterOptions(){
   const fB = $('fBuilding').value;
   const units = fB ? state.units.filter(u=>u.buildingId===fB) : state.units;
-  $('fUnit').innerHTML = '<option value="">All units</option>' + units.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+  $('fUnit').innerHTML = '<option value="">All units</option>' + units.map(u=>`<option value="${u.id}">${u.name}${(u.status||'Active')==='Inactive'?' (Inactive)':''}</option>`).join('');
 }
 $('fBuilding').addEventListener('change', ()=>{ updateUnitFilterOptions(); renderDashboard(); });
 $('fUnit').addEventListener('change', renderDashboard);
@@ -633,12 +650,16 @@ function renderBuildings(){
   }).join('');
 }
 
+let unitStatusFilter = '';
+
 function renderUnits(){
   const list = $('unitsList');
   if (!state.buildings.length){ list.innerHTML = `<div class="card empty">Add a building first, then add units to it.</div>`; return; }
   list.innerHTML = state.buildings.map(b=>{
-    const units = state.units.filter(u=>u.buildingId===b.id);
+    const allUnits = state.units.filter(u=>u.buildingId===b.id);
+    const units = unitStatusFilter ? allUnits.filter(u=>(u.status||'Active')===unitStatusFilter) : allUnits;
     const col = buildingColor[b.id];
+    if (allUnits.length && !units.length) return ''; // nothing in this building matches the filter
     return `<div class="card section-gap" style="border-left:4px solid ${col?col.color:'var(--primary)'}">
       <div style="padding:14px 16px 4px;"><b class="display" style="font-size:16px;">${b.name}</b></div>
       ${units.length ? units.map(u=>{
@@ -647,9 +668,12 @@ function renderUnits(){
         entries.forEach(e=>{ if(e.type==='Income') gross+=Number(e.amount)||0; else expense+=Number(e.amount)||0; });
         const net = gross-expense;
         const margin = gross ? (net/gross*100) : 0;
-        return `<div class="unit-row">
+        const isActive = (u.status||'Active') === 'Active';
+        return `<div class="unit-row ${isActive?'':'inactive'}">
           <div class="unit-left">
-            <span class="chip" style="background:${col?col.dim:'#eee'};color:${col?col.color:'#555'}">${u.status||'Active'}</span>
+            <button class="status-pill ${isActive?'is-active':'is-inactive'}" title="Click to toggle Active / Inactive" onclick="toggleUnitStatus('${u.id}')">
+              <span class="b-dot" style="background:${isActive?'var(--primary)':'var(--faint)'}"></span>${isActive?'Active':'Inactive'}
+            </button>
             <b>${u.name}</b>
           </div>
           <div style="display:flex;gap:18px;align-items:baseline;">
@@ -663,9 +687,34 @@ function renderUnits(){
             <button class="icon-btn" title="Delete unit" onclick="deleteUnit('${u.id}')">🗑</button>
           </div>
         </div>`;
-      }).join('') : `<div style="padding:12px 16px 16px;color:var(--muted);font-size:13px;">No units yet in this building.</div>`}
+      }).join('') : `<div style="padding:12px 16px 16px;color:var(--muted);font-size:13px;">No units match this filter.</div>`}
     </div>`;
   }).join('');
+}
+
+document.querySelectorAll('.status-tab').forEach(tab=>{
+  tab.addEventListener('click', ()=>{
+    document.querySelectorAll('.status-tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    unitStatusFilter = tab.dataset.status;
+    renderUnits();
+  });
+});
+
+async function toggleUnitStatus(id){
+  const u = unitById(id);
+  if (!u) return;
+  const next = (u.status||'Active') === 'Active' ? 'Inactive' : 'Active';
+  u.status = next; // optimistic update so the click feels instant
+  renderUnits();
+  try{
+    await apiPost('updateUnit', { id, status: next });
+    toast(`${u.name} marked ${next}`);
+  }catch(err){
+    u.status = next === 'Active' ? 'Inactive' : 'Active'; // revert on failure
+    renderUnits();
+    toast('Could not update status — try again.');
+  }
 }
 
 /* ---------------- Entry modal ---------------- */
@@ -676,7 +725,7 @@ function renderEntryModalOptions(){
 function updateEntryUnitOptions(){
   const b = $('eBuilding').value;
   const units = state.units.filter(u=>u.buildingId===b);
-  $('eUnit').innerHTML = units.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+  $('eUnit').innerHTML = units.map(u=>`<option value="${u.id}">${u.name}${(u.status||'Active')==='Inactive'?' (Inactive)':''}</option>`).join('');
 }
 $('eBuilding').addEventListener('change', updateEntryUnitOptions);
 
