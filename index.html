@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Celdobar Staycation — Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F5F6F2;
+    --surface:#FFFFFF;
+    --line:#E3E5DE;
+    --ink:#1C2321;
+    --muted:#6B7570;
+    --faint:#9BA39D;
+    --primary:#0F6B4D;
+    --primary-dim:#E6F1EC;
+    --expense:#B5811A;
+    --expense-dim:#FBF2DF;
+    --negative:#B3432B;
+    --negative-dim:#FBEAE4;
+    --focus:#0F6B4D;
+    --radius:10px;
+    --b-teal:#1B7A72; --b-teal-dim:#E5F3F1;
+    --b-indigo:#3C4B94; --b-indigo-dim:#E9EAF6;
+    --b-amber:#A9711A; --b-amber-dim:#F6EDDD;
+    --b-plum:#7A4F8C; --b-plum-dim:#F1E9F4;
+    --b-rose:#A6455A; --b-rose-dim:#F7E7EA;
+    --b-slate:#47586B; --b-slate-dim:#E9ECEF;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'IBM Plex Sans',sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .num{ font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; }
+  h1,h2,h3,.display{ font-family:'Fraunces',serif; }
+  a{color:inherit;}
+  button{font-family:inherit;}
+
+  /* ---------- Layout ---------- */
+  .app{ display:grid; grid-template-columns:220px 1fr; min-height:100vh; }
+  @media (max-width:860px){ .app{ grid-template-columns:1fr; } .sidebar{ position:sticky; top:0; z-index:20; } }
+
+  .sidebar{
+    background:var(--ink); color:#EDEFEA;
+    padding:22px 16px; display:flex; flex-direction:column; gap:4px;
+  }
+  .brand{ display:flex; align-items:center; gap:10px; padding:2px 8px 20px; }
+  .brand-mark{
+    width:34px; height:34px; border-radius:8px; background:var(--primary);
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Fraunces',serif; font-weight:700; font-size:18px; color:#fff; flex:none;
+  }
+  .brand-text{ line-height:1.15; }
+  .brand-text b{ display:block; font-family:'Fraunces',serif; font-size:15.5px; letter-spacing:.2px; }
+  .brand-text span{ display:block; font-size:11px; color:#B7BEB6; letter-spacing:.4px; text-transform:uppercase; }
+
+  .nav-item{
+    display:flex; align-items:center; gap:10px;
+    padding:10px 12px; border-radius:8px; cursor:pointer;
+    font-size:14px; font-weight:500; color:#C9CFC5;
+    border:none; background:transparent; text-align:left; width:100%;
+  }
+  .nav-item:hover{ background:#262E2B; color:#fff; }
+  .nav-item.active{ background:var(--primary); color:#fff; }
+  .nav-icon{ width:18px; text-align:center; opacity:.9; }
+  .nav-spacer{ flex:1; }
+  .nav-foot{ font-size:11px; color:#7B837A; padding:10px 12px; border-top:1px solid #2C3330; margin-top:8px; }
+
+  .main{ padding:28px 32px 60px; max-width:1180px; }
+  @media (max-width:640px){ .main{ padding:18px; } }
+  .page-head{ display:flex; align-items:baseline; justify-content:space-between; gap:16px; margin-bottom:22px; flex-wrap:wrap;}
+  .page-head h1{ font-size:26px; margin:0 0 4px; }
+  .page-sub{ color:var(--muted); font-size:13.5px; margin:0; }
+
+  /* ---------- Buttons / inputs ---------- */
+  .btn{
+    display:inline-flex; align-items:center; gap:7px;
+    background:var(--ink); color:#fff; border:none; border-radius:8px;
+    padding:10px 16px; font-size:13.5px; font-weight:600; cursor:pointer;
+    transition:transform .1s ease, opacity .15s ease;
+  }
+  .btn:hover{ opacity:.9; }
+  .btn:active{ transform:scale(.98); }
+  .btn.primary{ background:var(--primary); }
+  .btn.ghost{ background:transparent; color:var(--ink); border:1px solid var(--line); }
+  .btn.danger{ background:var(--negative); }
+  .btn.small{ padding:6px 11px; font-size:12.5px; border-radius:6px; }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+
+  label{ font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.3px; display:block; margin-bottom:5px; }
+  input,select,textarea{
+    width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px;
+    background:#fff; font-size:14px; color:var(--ink); font-family:inherit;
+  }
+  input:focus,select:focus,textarea:focus{ outline:2px solid var(--focus); outline-offset:1px; }
+  .field{ margin-bottom:14px; }
+  .field-row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:520px){ .field-row{ grid-template-columns:1fr; } }
+
+  /* ---------- Cards ---------- */
+  .card{ background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); }
+  .kpi-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
+  @media (max-width:860px){ .kpi-grid{ grid-template-columns:repeat(2,1fr);} }
+  .kpi{ padding:18px 18px 16px; }
+  .kpi-label{ font-size:11.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); font-weight:600; margin-bottom:10px;}
+  .kpi-value{ font-size:24px; font-weight:600; }
+  .kpi-value.pos{ color:var(--primary); }
+  .kpi-value.neg{ color:var(--negative); }
+  .kpi-sub{ font-size:12px; color:var(--faint); margin-top:6px; }
+
+  .filters{ display:flex; gap:10px; flex-wrap:wrap; align-items:end; padding:16px; margin-bottom:18px; }
+  .filters .field{ margin-bottom:0; min-width:150px; flex:1; }
+  .filters .field.grow{ flex:2; }
+
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; }
+  thead th{
+    text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.4px;
+    color:var(--muted); font-weight:600; padding:10px 14px; border-bottom:1px solid var(--line);
+    background:#FAFBF9;
+  }
+  tbody td{ padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  tbody tr:last-child td{ border-bottom:none; }
+  tbody tr:hover{ background:#FAFBF8; }
+  td.amt,th.amt{ text-align:right; }
+  .row-actions{ display:flex; gap:6px; justify-content:flex-end; }
+  .icon-btn{ background:none; border:none; cursor:pointer; color:var(--faint); padding:4px 6px; border-radius:5px; font-size:13px; }
+  .icon-btn:hover{ background:var(--line); color:var(--ink); }
+
+  .chip{ display:inline-flex; align-items:center; padding:3px 9px; border-radius:20px; font-size:11.5px; font-weight:600; }
+  .chip.income{ background:var(--primary-dim); color:var(--primary); }
+  .chip.expense{ background:var(--expense-dim); color:var(--expense); }
+  .b-chip{ display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; padding:3px 9px 3px 7px; border-radius:20px; }
+  .b-dot{ width:7px; height:7px; border-radius:50%; }
+
+  .empty{ text-align:center; padding:50px 20px; color:var(--muted); }
+  .empty .em-icon{ font-size:26px; margin-bottom:10px; }
+
+  /* ---------- Building / Unit cards ---------- */
+  .grid-cards{ display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:14px; }
+  .b-card{ padding:16px; border-left:4px solid var(--primary); position:relative; }
+  .b-card h3{ margin:0 0 4px; font-size:17px; }
+  .b-card .meta{ font-size:12.5px; color:var(--muted); }
+  .b-card .stats{ margin-top:12px; display:flex; gap:16px; font-size:12.5px; }
+  .b-card .stats b{ display:block; font-family:'IBM Plex Mono',monospace; font-size:14px; }
+
+  .unit-row{ display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--line); }
+  .unit-row:last-child{ border-bottom:none; }
+  .unit-left{ display:flex; align-items:center; gap:10px; }
+
+  /* ---------- Modal ---------- */
+  .overlay{ position:fixed; inset:0; background:rgba(20,24,20,.45); display:none; align-items:center; justify-content:center; z-index:100; padding:16px;}
+  .overlay.open{ display:flex; }
+  .modal{ background:#fff; border-radius:14px; width:100%; max-width:440px; padding:24px; max-height:90vh; overflow:auto; }
+  .modal h2{ margin:0 0 4px; font-size:19px; }
+  .modal .modal-sub{ color:var(--muted); font-size:13px; margin:0 0 18px; }
+  .modal-foot{ display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+
+  .toast{ position:fixed; bottom:22px; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff;
+    padding:11px 18px; border-radius:8px; font-size:13.5px; z-index:200; opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease; }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(-4px); }
+
+  .section-gap{ margin-top:28px; }
+  .flex-between{ display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:14px;}
+  .banner{ background:var(--expense-dim); border:1px solid #ECD9AE; color:#7A5A0F; padding:12px 16px; border-radius:10px; font-size:13px; margin-bottom:20px; }
+  .banner a{ text-decoration:underline; }
+  .table-wrap{ overflow-x:auto; }
+</style>
+</head>
+<body>
+
+<div id="app" class="app">
+  <!-- SIDEBAR -->
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">C</div>
+      <div class="brand-text"><b>Celdobar</b><span>Staycation Ledger</span></div>
+    </div>
+    <button class="nav-item active" data-view="dashboard"><span class="nav-icon">◆</span> Dashboard</button>
+    <button class="nav-item" data-view="buildings"><span class="nav-icon">▣</span> Buildings</button>
+    <button class="nav-item" data-view="units"><span class="nav-icon">▢</span> Units</button>
+    <button class="nav-item" data-view="reports"><span class="nav-icon">▤</span> Reports</button>
+    <div class="nav-spacer"></div>
+    <button class="nav-item" id="addEntryNav" style="background:var(--primary);color:#fff;"><span class="nav-icon">+</span> Add Entry</button>
+    <div class="nav-foot">Data lives in your Google Sheet.<br>Edits sync instantly.</div>
+  </nav>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div id="configBanner" class="banner" style="display:none;">
+      ⚠ Not connected yet. Paste your Apps Script Web App URL into <code>APPS_SCRIPT_URL</code> near the top of this file's script, then reload.
+    </div>
+
+    <!-- DASHBOARD -->
+    <section id="view-dashboard">
+      <div class="page-head">
+        <div><h1>Dashboard</h1><p class="page-sub">Income, expenses and margin across every building and unit.</p></div>
+        <button class="btn primary" id="btnAddEntryTop">+ Add Entry</button>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="card kpi"><div class="kpi-label">Gross Income</div><div class="kpi-value num pos" id="kpiGross">₱0.00</div><div class="kpi-sub" id="kpiGrossSub">—</div></div>
+        <div class="card kpi"><div class="kpi-label">Total Expenses</div><div class="kpi-value num" id="kpiExpense" style="color:var(--expense)">₱0.00</div><div class="kpi-sub" id="kpiExpenseSub">—</div></div>
+        <div class="card kpi"><div class="kpi-label">Net Income</div><div class="kpi-value num" id="kpiNet">₱0.00</div><div class="kpi-sub" id="kpiNetSub">—</div></div>
+        <div class="card kpi"><div class="kpi-label">Margin</div><div class="kpi-value num" id="kpiMargin">0%</div><div class="kpi-sub">Net ÷ Gross income</div></div>
+      </div>
+
+      <div class="card filters">
+        <div class="field">
+          <label>Building</label>
+          <select id="fBuilding"><option value="">All buildings</option></select>
+        </div>
+        <div class="field">
+          <label>Unit</label>
+          <select id="fUnit"><option value="">All units</option></select>
+        </div>
+        <div class="field">
+          <label>From</label>
+          <input type="date" id="fFrom">
+        </div>
+        <div class="field">
+          <label>To</label>
+          <input type="date" id="fTo">
+        </div>
+        <div class="field" style="flex:0;">
+          <label>&nbsp;</label>
+          <button class="btn ghost" id="btnClearFilters">Clear</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Date</th><th>Building</th><th>Unit</th><th>Type</th><th>Category</th>
+            <th class="amt">Amount</th><th></th>
+          </tr></thead>
+          <tbody id="entriesBody"></tbody>
+        </table>
+        </div>
+        <div id="entriesEmpty" class="empty" style="display:none;">
+          <div class="em-icon">📭</div>
+          No entries match these filters yet.
+        </div>
+      </div>
+    </section>
+
+    <!-- BUILDINGS -->
+    <section id="view-buildings" style="display:none;">
+      <div class="page-head">
+        <div><h1>Buildings</h1><p class="page-sub">Properties you operate units in.</p></div>
+        <button class="btn primary" id="btnAddBuilding">+ Add Building</button>
+      </div>
+      <div id="buildingsGrid" class="grid-cards"></div>
+    </section>
+
+    <!-- UNITS -->
+    <section id="view-units" style="display:none;">
+      <div class="page-head">
+        <div><h1>Units</h1><p class="page-sub">Every listing, grouped by building.</p></div>
+        <button class="btn primary" id="btnAddUnit">+ Add Unit</button>
+      </div>
+      <div id="unitsList"></div>
+    </section>
+
+    <!-- REPORTS -->
+    <section id="view-reports" style="display:none;">
+      <div class="page-head">
+        <div><h1>Reports</h1><p class="page-sub">Monthly income / expense / margin breakdown per unit.</p></div>
+      </div>
+      <div class="card filters">
+        <div class="field">
+          <label>Month</label>
+          <select id="rMonth">
+            <option value="01">January</option><option value="02">February</option><option value="03">March</option>
+            <option value="04">April</option><option value="05">May</option><option value="06">June</option>
+            <option value="07">July</option><option value="08">August</option><option value="09">September</option>
+            <option value="10">October</option><option value="11">November</option><option value="12">December</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Year</label>
+          <select id="rYear"></select>
+        </div>
+        <div class="field">
+          <label>Building</label>
+          <select id="rBuilding"><option value="">All buildings</option></select>
+        </div>
+        <div class="field" style="flex:0;"><label>&nbsp;</label><button class="btn primary" id="btnRunReport">Generate</button></div>
+        <div class="field" style="flex:0;"><label>&nbsp;</label><button class="btn ghost" id="btnPrint">Print / PDF</button></div>
+        <div class="field" style="flex:0;"><label>&nbsp;</label><button class="btn ghost" id="btnCsv">Export CSV</button></div>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>Unit</th><th>Building</th><th class="amt">Gross Income</th><th class="amt">Expenses</th><th class="amt">Net Income</th><th class="amt">Margin</th></tr></thead>
+          <tbody id="reportBody"></tbody>
+          <tfoot><tr style="font-weight:700;background:#FAFBF9;"><td colspan="2" style="padding:11px 14px;">TOTAL</td>
+            <td class="amt num" id="rTotalGross">₱0.00</td><td class="amt num" id="rTotalExpense">₱0.00</td>
+            <td class="amt num" id="rTotalNet">₱0.00</td><td class="amt num" id="rTotalMargin">0%</td></tr></tfoot>
+        </table>
+        </div>
+        <div id="reportEmpty" class="empty">Choose a month and click Generate.</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- MODAL: Add/Edit Entry -->
+<div class="overlay" id="modalEntry">
+  <div class="modal">
+    <h2 id="entryModalTitle">Add Entry</h2>
+    <p class="modal-sub">Log an income or expense for a unit and date.</p>
+    <div class="field">
+      <label>Type</label>
+      <select id="eType"><option value="Income">Income</option><option value="Expense">Expense</option></select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Building</label><select id="eBuilding"></select></div>
+      <div class="field"><label>Unit</label><select id="eUnit"></select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Date</label><input type="date" id="eDate"></div>
+      <div class="field"><label>Amount (₱)</label><input type="number" step="0.01" id="eAmount" placeholder="0.00"></div>
+    </div>
+    <div class="field"><label>Category</label><input type="text" id="eCategory" placeholder="e.g. Booking payout, Cleaning fee, Utilities"></div>
+    <div class="field"><label>Notes (optional)</label><textarea id="eNotes" rows="2"></textarea></div>
+    <input type="hidden" id="eId">
+    <div class="modal-foot">
+      <button class="btn ghost" id="eCancel">Cancel</button>
+      <button class="btn danger" id="eDelete" style="display:none;">Delete</button>
+      <button class="btn primary" id="eSave">Save Entry</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Add Building -->
+<div class="overlay" id="modalBuilding">
+  <div class="modal">
+    <h2>Add Building</h2>
+    <p class="modal-sub">A property you operate units in.</p>
+    <div class="field"><label>Building Name</label><input type="text" id="bName" placeholder="e.g. Beacon"></div>
+    <div class="field"><label>Notes (optional)</label><textarea id="bNotes" rows="2"></textarea></div>
+    <div class="modal-foot">
+      <button class="btn ghost" id="bCancel">Cancel</button>
+      <button class="btn primary" id="bSave">Add Building</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Add Unit -->
+<div class="overlay" id="modalUnit">
+  <div class="modal">
+    <h2>Add Unit</h2>
+    <p class="modal-sub">A listing inside one of your buildings.</p>
+    <div class="field"><label>Unit Code / Name</label><input type="text" id="uName" placeholder="e.g. 3715"></div>
+    <div class="field"><label>Building</label><select id="uBuilding"></select></div>
+    <div class="field"><label>Status</label><select id="uStatus"><option>Active</option><option>Inactive</option></select></div>
+    <div class="field"><label>Notes (optional)</label><textarea id="uNotes" rows="2"></textarea></div>
+    <div class="modal-foot">
+      <button class="btn ghost" id="uCancel">Cancel</button>
+      <button class="btn primary" id="uSave">Add Unit</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* =========================================================
+   CONFIG — paste your Apps Script Web App URL below
+   ========================================================= */
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5iGulXcJi9qumD6dOWcOL93kmXviXBN0oZfHKcdXXqoKntEPJxdlaGvkzt6CiB_zdYg/exec";
+
+const BUILDING_PALETTE = [
+  ['--b-teal','--b-teal-dim'], ['--b-indigo','--b-indigo-dim'], ['--b-amber','--b-amber-dim'],
+  ['--b-plum','--b-plum-dim'], ['--b-rose','--b-rose-dim'], ['--b-slate','--b-slate-dim']
+];
+
+let state = { buildings: [], units: [], entries: [] };
+let buildingColor = {}; // id -> {color,dim}
+
+function $(id){ return document.getElementById(id); }
+function fmtPHP(n){
+  n = Number(n)||0;
+  const s = Math.abs(n).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+  return (n<0? '-' : '') + '₱' + s;
+}
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2200);
+}
+function unitById(id){ return state.units.find(u=>u.id===id); }
+function buildingById(id){ return state.buildings.find(b=>b.id===id); }
+function buildingOfUnit(unitId){ const u = unitById(unitId); return u ? buildingById(u.buildingId) : null; }
+
+/* ---------------- API layer ---------------- */
+async function apiGet(){
+  const res = await fetch(APPS_SCRIPT_URL + '?action=getAll');
+  return res.json();
+}
+async function apiPost(action, payload){
+  const res = await fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // avoids CORS preflight on Apps Script
+    body: JSON.stringify({ action, payload })
+  });
+  return res.json();
+}
+
+async function loadAll(){
+  if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.indexOf('PASTE_YOUR') === 0){
+    $('configBanner').style.display = 'block';
+    return;
+  }
+  try{
+    const data = await apiGet();
+    if (!data.ok) throw new Error(data.error || 'Unknown error');
+    state.buildings = data.buildings || [];
+    state.units = data.units || [];
+    state.entries = data.entries || [];
+    assignColors();
+    renderAll();
+  }catch(err){
+    toast('Could not load data: ' + err.message);
+    console.error(err);
+  }
+}
+
+function assignColors(){
+  state.buildings.forEach((b, i) => {
+    const pair = BUILDING_PALETTE[i % BUILDING_PALETTE.length];
+    buildingColor[b.id] = { color: getComputedStyle(document.documentElement).getPropertyValue(pair[0]).trim(),
+                             dim: getComputedStyle(document.documentElement).getPropertyValue(pair[1]).trim() };
+  });
+}
+
+/* ---------------- Navigation ---------------- */
+document.querySelectorAll('.nav-item[data-view]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.nav-item[data-view]').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('main > section').forEach(s=>s.style.display='none');
+    $('view-' + btn.dataset.view).style.display = 'block';
+  });
+});
+$('addEntryNav').addEventListener('click', ()=>openEntryModal());
+$('btnAddEntryTop').addEventListener('click', ()=>openEntryModal());
+
+/* ---------------- Renderers ---------------- */
+function renderAll(){
+  renderFilterOptions();
+  renderDashboard();
+  renderBuildings();
+  renderUnits();
+  populateYearOptions();
+  renderEntryModalOptions();
+  renderUnitModalOptions();
+}
+
+function renderFilterOptions(){
+  const fB = $('fBuilding'), fU = $('fUnit'), rB = $('rBuilding');
+  const currentB = fB.value, currentU = fU.value;
+  fB.innerHTML = '<option value="">All buildings</option>' + state.buildings.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
+  rB.innerHTML = '<option value="">All buildings</option>' + state.buildings.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
+  fB.value = currentB;
+  updateUnitFilterOptions();
+  fU.value = currentU;
+}
+function updateUnitFilterOptions(){
+  const fB = $('fBuilding').value;
+  const units = fB ? state.units.filter(u=>u.buildingId===fB) : state.units;
+  $('fUnit').innerHTML = '<option value="">All units</option>' + units.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+}
+$('fBuilding').addEventListener('change', ()=>{ updateUnitFilterOptions(); renderDashboard(); });
+$('fUnit').addEventListener('change', renderDashboard);
+$('fFrom').addEventListener('change', renderDashboard);
+$('fTo').addEventListener('change', renderDashboard);
+$('btnClearFilters').addEventListener('click', ()=>{
+  $('fBuilding').value=''; updateUnitFilterOptions(); $('fUnit').value=''; $('fFrom').value=''; $('fTo').value='';
+  renderDashboard();
+});
+
+function filteredEntries(){
+  const b = $('fBuilding').value, u = $('fUnit').value, from = $('fFrom').value, to = $('fTo').value;
+  return state.entries.filter(e=>{
+    if (u && e.unitId !== u) return false;
+    if (b && !u){ const bl = buildingOfUnit(e.unitId); if (!bl || bl.id !== b) return false; }
+    if (from && e.date < from) return false;
+    if (to && e.date > to) return false;
+    return true;
+  }).sort((a,b)=> b.date.localeCompare(a.date));
+}
+
+function renderDashboard(){
+  const entries = filteredEntries();
+  let gross=0, expense=0;
+  entries.forEach(e=>{ if(e.type==='Income') gross += Number(e.amount)||0; else expense += Number(e.amount)||0; });
+  const net = gross - expense;
+  const margin = gross ? (net/gross*100) : 0;
+
+  $('kpiGross').textContent = fmtPHP(gross);
+  $('kpiExpense').textContent = fmtPHP(expense);
+  const netEl = $('kpiNet'); netEl.textContent = fmtPHP(net); netEl.className = 'kpi-value num ' + (net>=0?'pos':'neg');
+  $('kpiMargin').textContent = (gross? margin.toFixed(1) : '0.0') + '%';
+  $('kpiGrossSub').textContent = entries.filter(e=>e.type==='Income').length + ' income entries';
+  $('kpiExpenseSub').textContent = entries.filter(e=>e.type==='Expense').length + ' expense entries';
+  $('kpiNetSub').textContent = net>=0 ? 'Profitable' : 'Operating at a loss';
+
+  const body = $('entriesBody');
+  if (!entries.length){
+    body.innerHTML = ''; $('entriesEmpty').style.display='block';
+  } else {
+    $('entriesEmpty').style.display='none';
+    body.innerHTML = entries.map(e=>{
+      const unit = unitById(e.unitId);
+      const bld = unit ? buildingById(unit.buildingId) : null;
+      const col = bld ? buildingColor[bld.id] : null;
+      return `<tr>
+        <td class="num">${e.date||''}</td>
+        <td>${bld ? `<span class="b-chip" style="background:${col?col.dim:'#eee'};color:${col?col.color:'#555'}"><span class="b-dot" style="background:${col?col.color:'#555'}"></span>${bld.name}</span>` : '—'}</td>
+        <td>${unit? unit.name : '—'}</td>
+        <td><span class="chip ${e.type==='Income'?'income':'expense'}">${e.type}</span></td>
+        <td>${e.category||''}</td>
+        <td class="amt num" style="color:${e.type==='Income'?'var(--primary)':'var(--expense)'}">${fmtPHP(e.amount)}</td>
+        <td><div class="row-actions">
+          <button class="icon-btn" title="Edit" onclick="openEntryModal('${e.id}')">✎</button>
+          <button class="icon-btn" title="Delete" onclick="deleteEntry('${e.id}')">🗑</button>
+        </div></td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+function renderBuildings(){
+  const grid = $('buildingsGrid');
+  if (!state.buildings.length){ grid.innerHTML = `<div class="empty" style="grid-column:1/-1">No buildings yet — add your first one.</div>`; return; }
+  grid.innerHTML = state.buildings.map(b=>{
+    const units = state.units.filter(u=>u.buildingId===b.id);
+    const entries = state.entries.filter(e=> units.some(u=>u.id===e.unitId));
+    let gross=0, expense=0;
+    entries.forEach(e=>{ if(e.type==='Income') gross+=Number(e.amount)||0; else expense+=Number(e.amount)||0; });
+    const net = gross-expense;
+    const col = buildingColor[b.id];
+    return `<div class="card b-card" style="border-left-color:${col?col.color:'var(--primary)'}">
+      <h3>${b.name}</h3>
+      <div class="meta">${units.length} unit${units.length===1?'':'s'}${b.notes? ' · '+b.notes : ''}</div>
+      <div class="stats">
+        <div>Net income<br><b style="color:${net>=0?'var(--primary)':'var(--negative)'}">${fmtPHP(net)}</b></div>
+        <div>Gross<br><b>${fmtPHP(gross)}</b></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderUnits(){
+  const list = $('unitsList');
+  if (!state.buildings.length){ list.innerHTML = `<div class="card empty">Add a building first, then add units to it.</div>`; return; }
+  list.innerHTML = state.buildings.map(b=>{
+    const units = state.units.filter(u=>u.buildingId===b.id);
+    const col = buildingColor[b.id];
+    return `<div class="card section-gap" style="border-left:4px solid ${col?col.color:'var(--primary)'}">
+      <div style="padding:14px 16px 4px;"><b class="display" style="font-size:16px;">${b.name}</b></div>
+      ${units.length ? units.map(u=>{
+        const entries = state.entries.filter(e=>e.unitId===u.id);
+        let gross=0, expense=0;
+        entries.forEach(e=>{ if(e.type==='Income') gross+=Number(e.amount)||0; else expense+=Number(e.amount)||0; });
+        const net = gross-expense;
+        return `<div class="unit-row">
+          <div class="unit-left">
+            <span class="chip" style="background:${col?col.dim:'#eee'};color:${col?col.color:'#555'}">${u.status||'Active'}</span>
+            <b>${u.name}</b>
+          </div>
+          <div class="num" style="color:${net>=0?'var(--primary)':'var(--negative)'}">${fmtPHP(net)} net</div>
+        </div>`;
+      }).join('') : `<div style="padding:12px 16px 16px;color:var(--muted);font-size:13px;">No units yet in this building.</div>`}
+    </div>`;
+  }).join('');
+}
+
+/* ---------------- Entry modal ---------------- */
+function renderEntryModalOptions(){
+  $('eBuilding').innerHTML = state.buildings.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
+  updateEntryUnitOptions();
+}
+function updateEntryUnitOptions(){
+  const b = $('eBuilding').value;
+  const units = state.units.filter(u=>u.buildingId===b);
+  $('eUnit').innerHTML = units.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+}
+$('eBuilding').addEventListener('change', updateEntryUnitOptions);
+
+function openEntryModal(entryId){
+  renderEntryModalOptions();
+  const isEdit = !!entryId;
+  $('entryModalTitle').textContent = isEdit ? 'Edit Entry' : 'Add Entry';
+  $('eDelete').style.display = isEdit ? 'inline-flex' : 'none';
+  if (isEdit){
+    const e = state.entries.find(x=>x.id===entryId);
+    $('eId').value = e.id;
+    $('eType').value = e.type;
+    const unit = unitById(e.unitId);
+    $('eBuilding').value = unit ? unit.buildingId : '';
+    updateEntryUnitOptions();
+    $('eUnit').value = e.unitId;
+    $('eDate').value = e.date;
+    $('eAmount').value = e.amount;
+    $('eCategory').value = e.category || '';
+    $('eNotes').value = e.notes || '';
+  } else {
+    $('eId').value = '';
+    $('eType').value = 'Income';
+    $('eDate').value = new Date().toISOString().slice(0,10);
+    $('eAmount').value = '';
+    $('eCategory').value = '';
+    $('eNotes').value = '';
+  }
+  $('modalEntry').classList.add('open');
+}
+$('eCancel').addEventListener('click', ()=> $('modalEntry').classList.remove('open'));
+$('eSave').addEventListener('click', async ()=>{
+  const id = $('eId').value;
+  const payload = {
+    type: $('eType').value, unitId: $('eUnit').value, date: $('eDate').value,
+    amount: parseFloat($('eAmount').value)||0, category: $('eCategory').value, notes: $('eNotes').value
+  };
+  if (!payload.unitId){ toast('Add a unit to this building first.'); return; }
+  if (!payload.date){ toast('Pick a date.'); return; }
+  $('eSave').disabled = true;
+  try{
+    if (id){ payload.id = id; await apiPost('updateEntry', payload); toast('Entry updated'); }
+    else{ await apiPost('addEntry', payload); toast('Entry added'); }
+    $('modalEntry').classList.remove('open');
+    await loadAll();
+  }catch(err){ toast('Error saving entry'); }
+  $('eSave').disabled = false;
+});
+$('eDelete').addEventListener('click', async ()=>{
+  const id = $('eId').value;
+  if (!confirm('Delete this entry? This cannot be undone.')) return;
+  await apiPost('deleteEntry', { id });
+  $('modalEntry').classList.remove('open');
+  toast('Entry deleted');
+  await loadAll();
+});
+async function deleteEntry(id){
+  if (!confirm('Delete this entry? This cannot be undone.')) return;
+  await apiPost('deleteEntry', { id });
+  toast('Entry deleted');
+  await loadAll();
+}
+
+/* ---------------- Building modal ---------------- */
+$('btnAddBuilding').addEventListener('click', ()=>{
+  $('bName').value=''; $('bNotes').value='';
+  $('modalBuilding').classList.add('open');
+});
+$('bCancel').addEventListener('click', ()=> $('modalBuilding').classList.remove('open'));
+$('bSave').addEventListener('click', async ()=>{
+  const name = $('bName').value.trim();
+  if (!name){ toast('Name your building first.'); return; }
+  await apiPost('addBuilding', { name, notes: $('bNotes').value });
+  $('modalBuilding').classList.remove('open');
+  toast('Building added');
+  await loadAll();
+});
+
+/* ---------------- Unit modal ---------------- */
+function renderUnitModalOptions(){
+  $('uBuilding').innerHTML = state.buildings.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
+}
+$('btnAddUnit').addEventListener('click', ()=>{
+  if (!state.buildings.length){ toast('Add a building first.'); return; }
+  $('uName').value=''; $('uNotes').value=''; $('uStatus').value='Active';
+  renderUnitModalOptions();
+  $('modalUnit').classList.add('open');
+});
+$('uCancel').addEventListener('click', ()=> $('modalUnit').classList.remove('open'));
+$('uSave').addEventListener('click', async ()=>{
+  const name = $('uName').value.trim();
+  if (!name){ toast('Name the unit first.'); return; }
+  await apiPost('addUnit', { name, buildingId: $('uBuilding').value, status: $('uStatus').value, notes: $('uNotes').value });
+  $('modalUnit').classList.remove('open');
+  toast('Unit added');
+  await loadAll();
+});
+
+/* ---------------- Reports ---------------- */
+function populateYearOptions(){
+  const sel = $('rYear');
+  if (sel.options.length) return;
+  const years = new Set(state.entries.map(e=> (e.date||'').slice(0,4)).filter(Boolean));
+  const thisYear = new Date().getFullYear();
+  years.add(String(thisYear));
+  const sorted = Array.from(years).sort().reverse();
+  sel.innerHTML = sorted.map(y=>`<option value="${y}">${y}</option>`).join('');
+}
+$('btnRunReport').addEventListener('click', runReport);
+function runReport(){
+  const month = $('rMonth').value, year = $('rYear').value, bFilter = $('rBuilding').value;
+  const prefix = `${year}-${month}`;
+  const units = bFilter ? state.units.filter(u=>u.buildingId===bFilter) : state.units;
+  let totalG=0, totalE=0;
+  const rows = units.map(u=>{
+    const entries = state.entries.filter(e=> e.unitId===u.id && (e.date||'').startsWith(prefix));
+    let gross=0, expense=0;
+    entries.forEach(e=>{ if(e.type==='Income') gross+=Number(e.amount)||0; else expense+=Number(e.amount)||0; });
+    const net = gross-expense;
+    const margin = gross ? (net/gross*100) : 0;
+    totalG += gross; totalE += expense;
+    const bld = buildingById(u.buildingId);
+    return { unit:u.name, building: bld?bld.name:'—', gross, expense, net, margin, hasData: entries.length>0 };
+  }).filter(r=>r.hasData);
+
+  const body = $('reportBody');
+  if (!rows.length){
+    body.innerHTML=''; $('reportEmpty').style.display='block';
+  } else {
+    $('reportEmpty').style.display='none';
+    body.innerHTML = rows.map(r=>`<tr>
+      <td>${r.unit}</td><td>${r.building}</td>
+      <td class="amt num">${fmtPHP(r.gross)}</td>
+      <td class="amt num" style="color:var(--expense)">${fmtPHP(r.expense)}</td>
+      <td class="amt num" style="color:${r.net>=0?'var(--primary)':'var(--negative)'}">${fmtPHP(r.net)}</td>
+      <td class="amt num">${r.gross? r.margin.toFixed(1):'0.0'}%</td>
+    </tr>`).join('');
+  }
+  const totalNet = totalG-totalE;
+  $('rTotalGross').textContent = fmtPHP(totalG);
+  $('rTotalExpense').textContent = fmtPHP(totalE);
+  $('rTotalNet').textContent = fmtPHP(totalNet);
+  $('rTotalMargin').textContent = (totalG? (totalNet/totalG*100).toFixed(1):'0.0') + '%';
+  window._lastReportRows = rows;
+}
+$('btnPrint').addEventListener('click', ()=> window.print());
+$('btnCsv').addEventListener('click', ()=>{
+  const rows = window._lastReportRows || [];
+  if (!rows.length){ toast('Generate a report first.'); return; }
+  let csv = 'Unit,Building,Gross Income,Expenses,Net Income,Margin %\n';
+  rows.forEach(r=>{ csv += `${r.unit},${r.building},${r.gross.toFixed(2)},${r.expense.toFixed(2)},${r.net.toFixed(2)},${r.margin.toFixed(1)}\n`; });
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `celdobar-report-${$('rYear').value}-${$('rMonth').value}.csv`;
+  a.click();
+});
+
+/* ---------------- Init ---------------- */
+loadAll();
+</script>
+</body>
+</html>
