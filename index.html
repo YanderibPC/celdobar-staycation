@@ -6,6 +6,7 @@
 <title>Celdobar Staycation — Ledger</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <style>
   :root{
     --paper:#F5F6F2;
@@ -104,7 +105,7 @@
   @media (max-width:520px){ .field-row{ grid-template-columns:1fr; } }
 
   /* ---------- Cards ---------- */
-  .card{ background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); }
+  .card{ background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); box-shadow:0 1px 2px rgba(28,35,33,.03), 0 1px 10px rgba(28,35,33,.02); }
   .kpi-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
   @media (max-width:860px){ .kpi-grid{ grid-template-columns:repeat(2,1fr);} }
   .kpi{ padding:18px 18px 16px; }
@@ -187,9 +188,70 @@
   .banner{ background:var(--expense-dim); border:1px solid #ECD9AE; color:#7A5A0F; padding:12px 16px; border-radius:10px; font-size:13px; margin-bottom:20px; }
   .banner a{ text-decoration:underline; }
   .table-wrap{ overflow-x:auto; }
+
+  /* ---------- Timestamps ---------- */
+  .ts{ font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--faint); white-space:nowrap; }
+  .ts.small{ font-size:11px; }
+  td.ts-cell{ color:var(--faint); }
+
+  /* ---------- Charts ---------- */
+  .chart-grid{ display:grid; grid-template-columns:1.4fr 1fr; gap:14px; margin-bottom:20px; }
+  @media (max-width:860px){ .chart-grid{ grid-template-columns:1fr; } }
+  .chart-card{ padding:18px 20px 12px; }
+  .chart-card h3{ margin:0 0 2px; font-size:14.5px; }
+  .chart-card .chart-sub{ font-size:12px; color:var(--muted); margin:0 0 14px; }
+  .chart-card .chart-wrap{ position:relative; height:260px; }
+  .chart-legend{ display:flex; flex-wrap:wrap; gap:10px 16px; margin-top:12px; font-size:12px; color:var(--muted); }
+  .chart-legend span{ display:inline-flex; align-items:center; gap:6px; }
+  .legend-dot{ width:9px; height:9px; border-radius:3px; display:inline-block; }
+
+  /* ---------- Activity log ---------- */
+  .log-row{ display:flex; align-items:flex-start; gap:12px; padding:12px 14px; border-bottom:1px solid var(--line); }
+  .log-row:last-child{ border-bottom:none; }
+  .log-badge{ flex:none; width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; margin-top:1px; }
+  .log-badge.created{ background:var(--primary-dim); color:var(--primary); }
+  .log-badge.updated{ background:var(--expense-dim); color:var(--expense); }
+  .log-badge.deleted{ background:var(--negative-dim); color:var(--negative); }
+  .log-body{ flex:1; min-width:0; }
+  .log-title{ font-size:13.5px; font-weight:600; }
+  .log-meta{ font-size:12px; color:var(--muted); margin-top:2px; }
+  .log-time{ flex:none; font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--faint); text-align:right; white-space:nowrap; padding-top:3px; }
+
+  /* ---------- Print header (screen-hidden) ---------- */
+  .print-only{ display:none; }
+
+  @media print{
+    .sidebar, .page-head button, .filters, .toast, .overlay, .nav-item, #btnPrint, #btnCsv, #btnRunReport{ display:none !important; }
+    .app{ display:block; }
+    .main{ max-width:none; padding:0 22px; }
+    body{ background:#fff; }
+    .card{ box-shadow:none; border:1px solid #ccc; }
+    .print-only{ display:block; }
+    .print-header{ display:flex; align-items:flex-start; justify-content:space-between; border-bottom:2px solid var(--ink); padding-bottom:14px; margin-bottom:18px; }
+    .print-header .brand-mark{ background:var(--primary) !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .print-header h1{ margin:0; font-size:22px; }
+    .print-header .period{ font-size:13px; color:var(--muted); margin-top:2px; }
+    .print-footer{ margin-top:22px; padding-top:10px; border-top:1px solid var(--line); font-size:11px; color:var(--faint); display:flex; justify-content:space-between; }
+    thead th{ background:#fff !important; -webkit-print-color-adjust:exact; }
+    .chart-card{ break-inside:avoid; }
+  }
 </style>
 </head>
 <body>
+
+<div class="print-only print-header">
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div class="brand-mark" style="width:34px;height:34px;border-radius:8px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Fraunces',serif;font-weight:700;font-size:18px;">C</div>
+    <div>
+      <h1>Celdobar Staycation</h1>
+      <div class="period" id="printPeriod">Report</div>
+    </div>
+  </div>
+  <div style="text-align:right;font-size:12px;color:var(--muted);">
+    <div>Generated</div>
+    <div class="ts" id="printGeneratedAt" style="color:var(--ink);"></div>
+  </div>
+</div>
 
 <div id="app" class="app">
   <!-- SIDEBAR -->
@@ -202,6 +264,7 @@
     <button class="nav-item" data-view="buildings"><span class="nav-icon">▣</span> Buildings</button>
     <button class="nav-item" data-view="units"><span class="nav-icon">▢</span> Units</button>
     <button class="nav-item" data-view="reports"><span class="nav-icon">▤</span> Reports</button>
+    <button class="nav-item" data-view="activity"><span class="nav-icon">⟲</span> Activity Log</button>
     <div class="nav-spacer"></div>
     <button class="nav-item" id="addEntryNav" style="background:var(--primary);color:#fff;"><span class="nav-icon">+</span> Add Entry</button>
     <div class="nav-foot">Data lives in your Google Sheet.<br>Edits sync instantly.</div>
@@ -278,7 +341,7 @@
         <table>
           <thead><tr>
             <th>Date</th><th>Building</th><th>Unit</th><th>Type</th><th>Category</th>
-            <th class="amt">Amount</th><th></th>
+            <th class="amt">Amount</th><th>Logged</th><th></th>
           </tr></thead>
           <tbody id="entriesBody"></tbody>
         </table>
@@ -341,6 +404,19 @@
         <div class="field" style="flex:0;"><label>&nbsp;</label><button class="btn ghost" id="btnPrint">Print / PDF</button></div>
         <div class="field" style="flex:0;"><label>&nbsp;</label><button class="btn ghost" id="btnCsv">Export CSV</button></div>
       </div>
+      <div class="chart-grid" id="reportCharts" style="display:none;">
+        <div class="card chart-card">
+          <h3>Gross, Expense &amp; Net by Unit</h3>
+          <p class="chart-sub">Compares every unit with activity in the selected period.</p>
+          <div class="chart-wrap"><canvas id="chartByUnit"></canvas></div>
+        </div>
+        <div class="card chart-card">
+          <h3>Expense Breakdown</h3>
+          <p class="chart-sub">Where costs went, by category.</p>
+          <div class="chart-wrap"><canvas id="chartExpenseCat"></canvas></div>
+          <div class="chart-legend" id="chartExpenseLegend"></div>
+        </div>
+      </div>
       <div class="card">
         <div class="table-wrap">
         <table>
@@ -352,6 +428,25 @@
         </table>
         </div>
         <div id="reportEmpty" class="empty">Choose a month and click Generate.</div>
+        <div class="print-only print-footer">
+          <span>Celdobar Staycation Ledger</span>
+          <span id="printFooterTime"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ACTIVITY LOG -->
+    <section id="view-activity" style="display:none;">
+      <div class="page-head">
+        <div><h1>Activity Log</h1><p class="page-sub">Timestamped record of every building, unit and entry added, updated or deleted on this device.</p></div>
+        <button class="btn ghost" id="btnClearLog">Clear Log</button>
+      </div>
+      <div class="card">
+        <div id="activityList"></div>
+        <div id="activityEmpty" class="empty" style="display:none;">
+          <div class="em-icon">🕓</div>
+          Nothing logged yet — actions you take will show up here with a timestamp.
+        </div>
       </div>
     </section>
   </main>
@@ -435,6 +530,66 @@ const BUILDING_PALETTE = [
 let state = { buildings: [], units: [], entries: [] };
 let buildingColor = {}; // id -> {color,dim}
 
+/* ---------------- Timestamps & Activity Log ----------------
+   Records are timestamped locally (this browser) the moment they're
+   added, edited, or deleted, since the Sheet backend may not track
+   this itself. Stored in localStorage so history survives reloads. */
+const LOG_KEY = 'celdobar_activity_log';
+const CREATED_KEY = 'celdobar_created_at';
+
+function fmtTs(d){
+  d = d instanceof Date ? d : new Date(d);
+  if (isNaN(d)) return '—';
+  const date = d.toLocaleDateString('en-PH', { month:'short', day:'numeric', year:'numeric' });
+  const time = d.toLocaleTimeString('en-PH', { hour:'2-digit', minute:'2-digit' });
+  return `${date} · ${time}`;
+}
+function loadJSON(key, fallback){
+  try{ const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; }
+  catch(e){ return fallback; }
+}
+function saveJSON(key, val){
+  try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){ /* storage unavailable */ }
+}
+function getCreatedMap(){ return loadJSON(CREATED_KEY, {}); }
+function markCreated(id){
+  const map = getCreatedMap();
+  if (!map[id]) { map[id] = new Date().toISOString(); saveJSON(CREATED_KEY, map); }
+}
+function createdAtFor(id){ return getCreatedMap()[id] || null; }
+
+function logActivity(action, entity, name, detail){
+  const list = loadJSON(LOG_KEY, []);
+  list.unshift({ ts: new Date().toISOString(), action, entity, name, detail: detail||'' });
+  if (list.length > 300) list.length = 300;
+  saveJSON(LOG_KEY, list);
+  if ($('view-activity').style.display !== 'none') renderActivityLog();
+}
+
+function renderActivityLog(){
+  const list = loadJSON(LOG_KEY, []);
+  const wrap = $('activityList');
+  if (!list.length){ wrap.innerHTML=''; $('activityEmpty').style.display='block'; return; }
+  $('activityEmpty').style.display = 'none';
+  const iconFor = a => a==='created' ? '+' : a==='deleted' ? '×' : '✎';
+  wrap.innerHTML = list.map(l=>{
+    return `<div class="log-row">
+      <div class="log-badge ${l.action}">${iconFor(l.action)}</div>
+      <div class="log-body">
+        <div class="log-title">${l.entity} ${l.action}${l.name? ' — '+l.name : ''}</div>
+        ${l.detail ? `<div class="log-meta">${l.detail}</div>` : ''}
+      </div>
+      <div class="log-time">${fmtTs(l.ts)}</div>
+    </div>`;
+  }).join('');
+}
+$('btnClearLog').addEventListener('click', ()=>{
+  if (!confirm('Clear the activity log on this device? This only clears the local history, not your Sheet data.')) return;
+  saveJSON(LOG_KEY, []);
+  renderActivityLog();
+  toast('Activity log cleared');
+});
+
 function $(id){ return document.getElementById(id); }
 function fmtPHP(n){
   n = Number(n)||0;
@@ -497,6 +652,8 @@ document.querySelectorAll('.nav-item[data-view]').forEach(btn=>{
     btn.classList.add('active');
     document.querySelectorAll('main > section').forEach(s=>s.style.display='none');
     $('view-' + btn.dataset.view).style.display = 'block';
+    if (btn.dataset.view === 'activity') renderActivityLog();
+    if (btn.dataset.view === 'reports' && window._lastReportRows) renderReportCharts(window._lastReportRows);
   });
 });
 $('addEntryNav').addEventListener('click', ()=>openEntryModal());
@@ -580,6 +737,7 @@ function renderDashboard(){
         <td><span class="chip ${e.type==='Income'?'income':'expense'}">${e.type}</span></td>
         <td>${e.category||''}</td>
         <td class="amt num" style="color:${e.type==='Income'?'var(--primary)':'var(--expense)'}">${fmtPHP(e.amount)}</td>
+        <td class="ts-cell ts">${(()=>{ const c = createdAtFor(e.id); return c ? fmtTs(c) : '—'; })()}</td>
         <td><div class="row-actions">
           <button class="icon-btn" title="Edit" onclick="openEntryModal('${e.id}')">✎</button>
           <button class="icon-btn" title="Delete" onclick="deleteEntry('${e.id}')">🗑</button>
@@ -642,6 +800,7 @@ function renderBuildings(){
       </div>
       <h3>${b.name}</h3>
       <div class="meta">${units.length} unit${units.length===1?'':'s'}${b.notes? ' · '+b.notes : ''}</div>
+      ${createdAtFor(b.id) ? `<div class="ts" style="margin-top:6px;">Added ${fmtTs(createdAtFor(b.id))}</div>` : ''}
       <div class="stats">
         <div>Net income<br><b style="color:${net>=0?'var(--primary)':'var(--negative)'}">${fmtPHP(net)}</b></div>
         <div>Gross<br><b>${fmtPHP(gross)}</b></div>
@@ -675,6 +834,7 @@ function renderUnits(){
               <span class="b-dot" style="background:${isActive?'var(--primary)':'var(--faint)'}"></span>${isActive?'Active':'Inactive'}
             </button>
             <b>${u.name}</b>
+            ${createdAtFor(u.id) ? `<span class="ts">Added ${fmtTs(createdAtFor(u.id))}</span>` : ''}
           </div>
           <div style="display:flex;gap:18px;align-items:baseline;">
             <div class="num" style="font-size:12px;color:var(--muted);">Gross <b style="color:var(--ink);font-size:13px;">${fmtPHP(gross)}</b></div>
@@ -766,26 +926,44 @@ $('eSave').addEventListener('click', async ()=>{
   if (!payload.unitId){ toast('Add a unit to this building first.'); return; }
   if (!payload.date){ toast('Pick a date.'); return; }
   $('eSave').disabled = true;
+  const unitName = (unitById(payload.unitId)||{}).name || '';
+  const label = `${fmtPHP(payload.amount)}${payload.category? ' – '+payload.category : ''}${unitName? ' ('+unitName+')':''}`;
+  const prevIds = new Set(state.entries.map(x=>x.id));
   try{
-    if (id){ payload.id = id; await apiPost('updateEntry', payload); toast('Entry updated'); }
-    else{ await apiPost('addEntry', payload); toast('Entry added'); }
+    if (id){
+      payload.id = id;
+      await apiPost('updateEntry', payload);
+      toast('Entry updated');
+      logActivity('updated', 'Entry', label);
+    } else{
+      await apiPost('addEntry', payload);
+      toast('Entry added');
+      logActivity('created', 'Entry', label);
+    }
     $('modalEntry').classList.remove('open');
     await loadAll();
+    state.entries.filter(x=>!prevIds.has(x.id)).forEach(x=>markCreated(x.id));
   }catch(err){ toast('Error saving entry'); }
   $('eSave').disabled = false;
 });
 $('eDelete').addEventListener('click', async ()=>{
   const id = $('eId').value;
   if (!confirm('Delete this entry? This cannot be undone.')) return;
+  const e = state.entries.find(x=>x.id===id);
+  const label = e ? `${fmtPHP(e.amount)}${e.category? ' – '+e.category:''}` : '';
   await apiPost('deleteEntry', { id });
   $('modalEntry').classList.remove('open');
   toast('Entry deleted');
+  logActivity('deleted', 'Entry', label);
   await loadAll();
 });
 async function deleteEntry(id){
   if (!confirm('Delete this entry? This cannot be undone.')) return;
+  const e = state.entries.find(x=>x.id===id);
+  const label = e ? `${fmtPHP(e.amount)}${e.category? ' – '+e.category:''}` : '';
   await apiPost('deleteEntry', { id });
   toast('Entry deleted');
+  logActivity('deleted', 'Entry', label);
   await loadAll();
 }
 
@@ -810,11 +988,20 @@ $('bSave').addEventListener('click', async ()=>{
   if (!name){ toast('Name your building first.'); return; }
   const id = $('bId').value;
   $('bSave').disabled = true;
+  const prevIds = new Set(state.buildings.map(b=>b.id));
   try{
-    if (id){ await apiPost('updateBuilding', { id, name, notes: $('bNotes').value }); toast('Building updated'); }
-    else{ await apiPost('addBuilding', { name, notes: $('bNotes').value }); toast('Building added'); }
+    if (id){
+      await apiPost('updateBuilding', { id, name, notes: $('bNotes').value });
+      toast('Building updated');
+      logActivity('updated', 'Building', name);
+    } else{
+      await apiPost('addBuilding', { name, notes: $('bNotes').value });
+      toast('Building added');
+      logActivity('created', 'Building', name);
+    }
     $('modalBuilding').classList.remove('open');
     await loadAll();
+    state.buildings.filter(b=>!prevIds.has(b.id)).forEach(b=>markCreated(b.id));
   }catch(err){ toast('Error saving building'); }
   $('bSave').disabled = false;
 });
@@ -823,17 +1010,21 @@ $('bDelete').addEventListener('click', async ()=>{
   const units = state.units.filter(u=>u.buildingId===id);
   if (units.length){ toast(`Move or delete its ${units.length} unit(s) first.`); return; }
   if (!confirm('Delete this building? This cannot be undone.')) return;
+  const name = (buildingById(id)||{}).name || '';
   await apiPost('deleteBuilding', { id });
   $('modalBuilding').classList.remove('open');
   toast('Building deleted');
+  logActivity('deleted', 'Building', name);
   await loadAll();
 });
 async function deleteBuilding(id){
   const units = state.units.filter(u=>u.buildingId===id);
   if (units.length){ toast(`This building has ${units.length} unit(s) — move or delete them first.`); return; }
   if (!confirm('Delete this building? This cannot be undone.')) return;
+  const name = (buildingById(id)||{}).name || '';
   await apiPost('deleteBuilding', { id });
   toast('Building deleted');
+  logActivity('deleted', 'Building', name);
   await loadAll();
 }
 
@@ -865,11 +1056,21 @@ $('uSave').addEventListener('click', async ()=>{
   const id = $('uId').value;
   const payload = { name, buildingId: $('uBuilding').value, status: $('uStatus').value, notes: $('uNotes').value };
   $('uSave').disabled = true;
+  const prevIds = new Set(state.units.map(u=>u.id));
   try{
-    if (id){ payload.id = id; await apiPost('updateUnit', payload); toast('Unit updated'); }
-    else{ await apiPost('addUnit', payload); toast('Unit added'); }
+    if (id){
+      payload.id = id;
+      await apiPost('updateUnit', payload);
+      toast('Unit updated');
+      logActivity('updated', 'Unit', name);
+    } else{
+      await apiPost('addUnit', payload);
+      toast('Unit added');
+      logActivity('created', 'Unit', name);
+    }
     $('modalUnit').classList.remove('open');
     await loadAll();
+    state.units.filter(u=>!prevIds.has(u.id)).forEach(u=>markCreated(u.id));
   }catch(err){ toast('Error saving unit'); }
   $('uSave').disabled = false;
 });
@@ -885,8 +1086,10 @@ async function confirmAndDeleteUnit(id){
     ? `This unit has ${entryCount} entr${entryCount===1?'y':'ies'} logged against it. Delete it anyway? The entries will stay in the sheet but won't be linked to a unit.`
     : 'Delete this unit? This cannot be undone.';
   if (!confirm(msg)) return;
+  const name = (unitById(id)||{}).name || '';
   await apiPost('deleteUnit', { id });
   toast('Unit deleted');
+  logActivity('deleted', 'Unit', name);
   await loadAll();
 }
 
@@ -906,16 +1109,25 @@ function runReport(){
   const prefix = `${year}-${month}`;
   const units = bFilter ? state.units.filter(u=>u.buildingId===bFilter) : state.units;
   let totalG=0, totalE=0;
+  const catTotals = {};
   const rows = units.map(u=>{
     const entries = state.entries.filter(e=> e.unitId===u.id && (e.date||'').startsWith(prefix));
     let gross=0, expense=0;
-    entries.forEach(e=>{ if(e.type==='Income') gross+=Number(e.amount)||0; else expense+=Number(e.amount)||0; });
+    entries.forEach(e=>{
+      if(e.type==='Income') gross+=Number(e.amount)||0;
+      else {
+        expense+=Number(e.amount)||0;
+        const cat = e.category || 'Uncategorized';
+        catTotals[cat] = (catTotals[cat]||0) + (Number(e.amount)||0);
+      }
+    });
     const net = gross-expense;
     const margin = gross ? (net/gross*100) : 0;
     totalG += gross; totalE += expense;
     const bld = buildingById(u.buildingId);
     return { unit:u.name, building: bld?bld.name:'—', gross, expense, net, margin, hasData: entries.length>0 };
   }).filter(r=>r.hasData);
+  window._lastCatTotals = catTotals;
 
   const body = $('reportBody');
   if (!rows.length){
@@ -936,8 +1148,73 @@ function runReport(){
   $('rTotalNet').textContent = fmtPHP(totalNet);
   $('rTotalMargin').textContent = (totalG? (totalNet/totalG*100).toFixed(1):'0.0') + '%';
   window._lastReportRows = rows;
+
+  const monthNames = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
+  const bldName = bFilter ? ((buildingById(bFilter)||{}).name || '') : 'All buildings';
+  window._lastReportLabel = `${monthNames[parseInt(month,10)]} ${year} · ${bldName}`;
+
+  renderReportCharts(rows, catTotals);
 }
-$('btnPrint').addEventListener('click', ()=> window.print());
+
+/* ---------------- Report charts ---------------- */
+let _chartByUnit=null, _chartExpenseCat=null;
+const CHART_PALETTE = ['#1B7A72','#3C4B94','#A9711A','#7A4F8C','#A6455A','#47586B','#0F6B4D','#B5811A'];
+
+function renderReportCharts(rows, catTotals){
+  catTotals = catTotals || window._lastCatTotals || {};
+  const container = $('reportCharts');
+  if (!rows || !rows.length){ container.style.display='none'; return; }
+  container.style.display='grid';
+
+  const barCtx = document.getElementById('chartByUnit').getContext('2d');
+  const labels = rows.map(r=>r.unit);
+  if (_chartByUnit) _chartByUnit.destroy();
+  _chartByUnit = new Chart(barCtx, {
+    type:'bar',
+    data:{ labels, datasets:[
+      { label:'Gross Income', data: rows.map(r=>r.gross), backgroundColor:'#1B7A72' },
+      { label:'Expenses', data: rows.map(r=>r.expense), backgroundColor:'#A9711A' },
+      { label:'Net Income', data: rows.map(r=>r.net), backgroundColor:'#0F6B4D' }
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, font:{ family:"'IBM Plex Sans'", size:11.5 } } },
+        tooltip:{ callbacks:{ label: (c)=> `${c.dataset.label}: ${fmtPHP(c.raw)}` } } },
+      scales:{
+        x:{ grid:{ display:false }, ticks:{ font:{ family:"'IBM Plex Sans'", size:11 } } },
+        y:{ ticks:{ callback:(v)=> fmtPHP(v), font:{ family:"'IBM Plex Mono'", size:10.5 } }, grid:{ color:'#E3E5DE' } }
+      }
+    }
+  });
+
+  const cats = Object.keys(catTotals).sort((a,b)=> catTotals[b]-catTotals[a]);
+  const pieCtx = document.getElementById('chartExpenseCat').getContext('2d');
+  if (_chartExpenseCat) _chartExpenseCat.destroy();
+  const legend = $('chartExpenseLegend');
+  if (!cats.length){
+    legend.innerHTML = '<span>No expenses in this period.</span>';
+  } else {
+    _chartExpenseCat = new Chart(pieCtx, {
+      type:'doughnut',
+      data:{ labels: cats, datasets:[{ data: cats.map(c=>catTotals[c]), backgroundColor: cats.map((_,i)=>CHART_PALETTE[i%CHART_PALETTE.length]), borderWidth:2, borderColor:'#fff' }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false },
+        tooltip:{ callbacks:{ label:(c)=> `${c.label}: ${fmtPHP(c.raw)}` } } }, cutout:'62%' }
+    });
+    const total = cats.reduce((s,c)=>s+catTotals[c],0);
+    legend.innerHTML = cats.map((c,i)=>{
+      const pct = total? (catTotals[c]/total*100).toFixed(0) : 0;
+      return `<span><span class="legend-dot" style="background:${CHART_PALETTE[i%CHART_PALETTE.length]}"></span>${c} — ${fmtPHP(catTotals[c])} (${pct}%)</span>`;
+    }).join('');
+  }
+}
+$('btnPrint').addEventListener('click', ()=>{
+  if (!window._lastReportRows){ toast('Generate a report first.'); return; }
+  const now = new Date();
+  $('printPeriod').textContent = window._lastReportLabel || 'Report';
+  $('printGeneratedAt').textContent = fmtTs(now);
+  $('printFooterTime').textContent = 'Printed ' + fmtTs(now);
+  window.print();
+});
 $('btnCsv').addEventListener('click', ()=>{
   const rows = window._lastReportRows || [];
   if (!rows.length){ toast('Generate a report first.'); return; }
