@@ -266,6 +266,8 @@
     <button class="nav-item active" data-view="dashboard"><span class="nav-icon">◆</span> Dashboard</button>
     <button class="nav-item" data-view="buildings"><span class="nav-icon">▣</span> Buildings</button>
     <button class="nav-item" data-view="units"><span class="nav-icon">▢</span> Units</button>
+    <button class="nav-item" data-view="cashflow"><span class="nav-icon">▥</span> Cash Flow</button>
+    <button class="nav-item" data-view="expenses"><span class="nav-icon">☰</span> Expenses</button>
     <button class="nav-item" data-view="reports"><span class="nav-icon">▤</span> Reports</button>
     <button class="nav-item" data-view="activity"><span class="nav-icon">⟲</span> Activity Log</button>
     <div class="nav-spacer"></div>
@@ -410,6 +412,57 @@
         </div>
       </div>
       <p class="page-sub" style="margin-top:10px;">Total Expenses = manual expense entries logged that month + each unit's active constant expenses (applied automatically every month). Manage constant expenses from a unit's own page under Units.</p>
+    </section>
+
+    <!-- EXPENSES (itemized, per unit, per building) -->
+    <section id="view-expenses" style="display:none;">
+      <div class="page-head">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="brand-mark" style="width:40px;height:40px;border-radius:10px;overflow:hidden;flex:none;">
+            <img src="data:image/jpeg;base64,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" alt="Celdobar" style="width:100%;height:100%;object-fit:cover;display:block;">
+          </div>
+          <div><h1 style="margin-bottom:2px;">Itemized Expenses</h1><p class="page-sub">Every constant (recurring) expense, grouped by building and unit.</p></div>
+        </div>
+        <button class="btn ghost" id="btnExpCsv">Export CSV</button>
+      </div>
+
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);">
+        <div class="card kpi"><div class="kpi-label">Buildings</div><div class="kpi-value num" id="expKpiBuildings">0</div></div>
+        <div class="card kpi"><div class="kpi-label">Line Items</div><div class="kpi-value num" id="expKpiCount">0</div></div>
+        <div class="card kpi"><div class="kpi-label">Total Monthly Expense</div><div class="kpi-value num" id="expKpiTotal" style="color:var(--expense)">₱0.00</div></div>
+      </div>
+
+      <div class="card" style="padding:16px 18px; margin-bottom:20px;">
+        <div class="flex-between" style="margin-bottom:2px;">
+          <h3 style="margin:0;font-size:14.5px;">Bulk-add from a spreadsheet</h3>
+          <button class="btn ghost small" id="btnToggleImport">Show</button>
+        </div>
+        <p class="page-sub" style="margin:0 0 10px;">Paste rows copied straight from your expense sheet — one expense per line, as <code>Unit, Category, Amount</code>. Matches units by name and adds each row as an active constant expense. Nothing is overwritten; run it again any time your source sheet changes.</p>
+        <div id="importPanel" style="display:none;">
+          <div class="field"><textarea id="impRows" rows="6" placeholder="3715, Association Dues, 3500&#10;3715, Wi-Fi, 1500&#10;3220, Cleaning Retainer, 2000"></textarea></div>
+          <div class="modal-foot" style="margin-top:8px;">
+            <button class="btn primary" id="btnImportRows">Add These Expenses</button>
+          </div>
+          <div id="importResult" class="page-sub" style="margin-top:4px;"></div>
+        </div>
+      </div>
+
+      <div class="card filters">
+        <div class="field">
+          <label>Building</label>
+          <select id="expBuilding"><option value="">All buildings</option></select>
+        </div>
+        <div class="field">
+          <label>Status</label>
+          <select id="expStatus"><option value="">All (Active + Inactive)</option><option value="Active">Active only</option><option value="Inactive">Inactive only</option></select>
+        </div>
+      </div>
+
+      <div id="expenseBuildings"></div>
+      <div id="expenseEmpty" class="empty" style="display:none;">
+        <div class="em-icon">🧾</div>
+        No constant expenses yet. Add one from a unit's page, or paste rows above.
+      </div>
     </section>
 
     <!-- REPORTS -->
@@ -574,7 +627,9 @@
 /* =========================================================
    CONFIG — paste your Apps Script Web App URL below
    ========================================================= */
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5iGulXcJi9qumD6dOWcOL93kmXviXBN0oZfHKcdXXqoKntEPJxdlaGvkzt6CiB_zdYg/exec";
+// Connected to "Celdobar Ledger DB"
+// (docs.google.com/spreadsheets/d/1k79rP7pElJmGOE6ZD-6wl6rqkOg6NjlT5vUhJ_hMYOk)
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwbzthuQpresUFunSl0jdI-WfvXQPU929ASqvz-EDQZNVRliLOmARVUEiBacdrZ4H83dw/exec";
 
 const BUILDING_PALETTE = [
   ['--b-teal','--b-teal-dim'], ['--b-indigo','--b-indigo-dim'], ['--b-amber','--b-amber-dim'],
@@ -704,6 +759,7 @@ function switchView(name){
   if (name === 'activity') renderActivityLog();
   if (name === 'reports' && window._lastReportRows) renderReportCharts(window._lastReportRows);
   if (name === 'cashflow') renderCashFlow();
+  if (name === 'expenses') renderExpensesView();
 }
 document.querySelectorAll('.nav-item[data-view]').forEach(btn=>{
   btn.addEventListener('click', ()=> switchView(btn.dataset.view));
@@ -723,15 +779,17 @@ function renderAll(){
   renderUnitModalOptions();
   if (currentUnitId) renderUnitDetail(currentUnitId);
   if ($('view-cashflow').style.display !== 'none') renderCashFlow();
+  if ($('view-expenses').style.display !== 'none') renderExpensesView();
 }
 
 function renderFilterOptions(){
-  const fB = $('fBuilding'), fU = $('fUnit'), rB = $('rBuilding'), cfB = $('cfBuilding');
-  const currentB = fB.value, currentU = fU.value, currentRB = rB.value, currentCfB = cfB.value;
+  const fB = $('fBuilding'), fU = $('fUnit'), rB = $('rBuilding'), cfB = $('cfBuilding'), expB = $('expBuilding');
+  const currentB = fB.value, currentU = fU.value, currentRB = rB.value, currentCfB = cfB.value, currentExpB = expB.value;
   fB.innerHTML = '<option value="">All buildings</option>' + state.buildings.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
   rB.innerHTML = '<option value="">All buildings</option>' + state.buildings.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
   cfB.innerHTML = '<option value="">All buildings</option>' + state.buildings.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
-  fB.value = currentB; rB.value = currentRB; cfB.value = currentCfB;
+  expB.innerHTML = '<option value="">All buildings</option>' + state.buildings.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
+  fB.value = currentB; rB.value = currentRB; cfB.value = currentCfB; expB.value = currentExpB;
   updateUnitFilterOptions();
   fU.value = currentU;
 }
@@ -1001,6 +1059,155 @@ $('cDelete').addEventListener('click', async ()=>{
   toast('Constant expense deleted');
   logActivity('deleted', 'Constant expense', c ? `${c.category} (${(unitById(unitId)||{}).name||''})` : '');
   await loadAll();
+});
+
+/* ---------------- Expenses view (itemized, per unit, per building) ---------------- */
+$('expBuilding').addEventListener('change', renderExpensesView);
+$('expStatus').addEventListener('change', renderExpensesView);
+$('btnToggleImport').addEventListener('click', ()=>{
+  const panel = $('importPanel');
+  const open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'block';
+  $('btnToggleImport').textContent = open ? 'Show' : 'Hide';
+});
+
+function renderExpensesView(){
+  const bFilter = $('expBuilding').value;
+  const sFilter = $('expStatus').value;
+  const buildings = bFilter ? state.buildings.filter(b=>b.id===bFilter) : state.buildings;
+
+  let totalCount = 0, totalAmt = 0, buildingsWithData = 0;
+  const wrap = $('expenseBuildings');
+  const sections = [];
+
+  buildings.forEach(b=>{
+    const units = state.units.filter(u=>u.buildingId===b.id);
+    const col = buildingColor[b.id];
+    let unitBlocks = [];
+    let buildingCount = 0, buildingTotal = 0;
+
+    units.forEach(u=>{
+      let list = constantExpensesForUnit(u.id);
+      if (sFilter) list = list.filter(c=>(c.status||'Active')===sFilter);
+      if (!list.length) return;
+      const unitTotal = list.reduce((s,c)=> s + (Number(c.amount)||0), 0);
+      buildingCount += list.length; buildingTotal += unitTotal;
+
+      const rows = list.map(c=>{
+        const active = (c.status||'Active')==='Active';
+        return `<tr class="${active?'':'inactive'}">
+          <td>${c.category||'—'}${c.notes?`<div class="page-sub" style="margin:2px 0 0;">${c.notes}</div>`:''}</td>
+          <td><span class="chip ${active?'income':'expense'}" style="${active?'':'background:#EEE9E1;color:var(--faint);'}">${active?'Active':'Inactive'}</span></td>
+          <td class="amt num">${fmtPHP(c.amount)}</td>
+          <td><div class="row-actions">
+            <button class="icon-btn" title="Edit" onclick="openConstantExpenseModal('${u.id}','${c.id}')">✎</button>
+            <button class="icon-btn" title="Delete" onclick="deleteConstantExpenseFromExpenses('${c.id}','${u.id}')">🗑</button>
+          </div></td>
+        </tr>`;
+      }).join('');
+
+      unitBlocks.push(`
+        <div style="margin-bottom:14px;">
+          <div class="flex-between" style="margin-bottom:6px;">
+            <div class="unit-name-cell"><b style="cursor:pointer;" onclick="openUnitDetail('${u.id}')">${u.name}</b>
+              <span class="page-sub" style="margin:0;">${list.length} item${list.length===1?'':'s'}</span>
+            </div>
+            <button class="btn ghost small" onclick="openConstantExpenseModal('${u.id}')">+ Add expense</button>
+          </div>
+          <div class="table-wrap">
+            <table class="unit-table">
+              <thead><tr><th>Category</th><th>Status</th><th class="amt">Amount / mo</th><th></th></tr></thead>
+              <tbody>${rows}</tbody>
+              <tfoot><tr style="font-weight:700;"><td colspan="2" style="padding:9px 14px;">Unit subtotal</td>
+                <td class="amt num" style="padding:9px 14px;">${fmtPHP(unitTotal)}</td><td></td></tr></tfoot>
+            </table>
+          </div>
+        </div>`);
+    });
+
+    if (!unitBlocks.length) return;
+    buildingsWithData++; totalCount += buildingCount; totalAmt += buildingTotal;
+
+    sections.push(`
+      <div class="card b-card" style="border-left-color:${col?col.color:'var(--primary)'}; margin-bottom:16px; padding:18px;">
+        <div class="flex-between" style="margin-bottom:10px;">
+          <div class="b-chip" style="background:${col?col.dim:'#eee'};color:${col?col.color:'#555'}"><span class="b-dot" style="background:${col?col.color:'#555'}"></span><b>${b.name}</b></div>
+          <div class="page-sub" style="margin:0;">${buildingCount} item${buildingCount===1?'':'s'} · <b class="num" style="color:var(--expense);">${fmtPHP(buildingTotal)}</b> / mo</div>
+        </div>
+        ${unitBlocks.join('')}
+      </div>`);
+  });
+
+  $('expKpiBuildings').textContent = buildingsWithData;
+  $('expKpiCount').textContent = totalCount;
+  $('expKpiTotal').textContent = fmtPHP(totalAmt);
+
+  if (!sections.length){
+    wrap.innerHTML = ''; $('expenseEmpty').style.display = 'block';
+  } else {
+    $('expenseEmpty').style.display = 'none';
+    wrap.innerHTML = sections.join('');
+  }
+  window._lastExpenseExport = { buildings, sFilter };
+}
+
+async function deleteConstantExpenseFromExpenses(id, unitId){
+  if (!confirm('Delete this constant expense? This cannot be undone.')) return;
+  const c = state.constantExpenses.find(x=>x.id===id);
+  await apiPost('deleteConstantExpense', { id });
+  toast('Constant expense deleted');
+  logActivity('deleted', 'Constant expense', c ? `${c.category} (${(unitById(unitId)||{}).name||''})` : '');
+  await loadAll();
+  renderExpensesView();
+}
+
+$('btnExpCsv').addEventListener('click', ()=>{
+  const bFilter = $('expBuilding').value, sFilter = $('expStatus').value;
+  let rows = state.constantExpenses.slice();
+  if (sFilter) rows = rows.filter(c=>(c.status||'Active')===sFilter);
+  if (bFilter) rows = rows.filter(c=>{ const u = unitById(c.unitId); return u && u.buildingId===bFilter; });
+  if (!rows.length){ toast('No expenses to export for this filter.'); return; }
+  let csv = 'Building,Unit,Category,Amount,Status,Notes\n';
+  rows.forEach(c=>{
+    const u = unitById(c.unitId); const b = u ? buildingById(u.buildingId) : null;
+    const esc = s => `"${String(s||'').replace(/"/g,'""')}"`;
+    csv += `${esc(b?b.name:'')},${esc(u?u.name:'')},${esc(c.category)},${(Number(c.amount)||0).toFixed(2)},${esc(c.status||'Active')},${esc(c.notes)}\n`;
+  });
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `celdobar-itemized-expenses.csv`;
+  a.click();
+});
+
+/* Bulk paste-import: "Unit, Category, Amount" per line -> addConstantExpense for each matched unit */
+$('btnImportRows').addEventListener('click', async ()=>{
+  const raw = $('impRows').value.trim();
+  if (!raw){ toast('Paste some rows first.'); return; }
+  const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
+  let added = 0, skipped = [];
+  $('btnImportRows').disabled = true;
+  for (const line of lines){
+    const parts = line.split(',').map(s=>s.trim());
+    if (parts.length < 3){ skipped.push(`"${line}" — expected Unit, Category, Amount`); continue; }
+    const [unitName, category, amountStr] = parts;
+    const amount = parseFloat(amountStr.replace(/[^\d.\-]/g,''));
+    const unit = state.units.find(u => u.name.toLowerCase() === unitName.toLowerCase());
+    if (!unit){ skipped.push(`"${unitName}" — no matching unit`); continue; }
+    if (!category || isNaN(amount)){ skipped.push(`"${line}" — missing category or invalid amount`); continue; }
+    try{
+      await apiPost('addConstantExpense', { unitId: unit.id, category, amount, status: 'Active', notes: '' });
+      added++;
+    }catch(err){ skipped.push(`"${line}" — save failed`); }
+  }
+  $('btnImportRows').disabled = false;
+  if (added) logActivity('created', 'Constant expense', `${added} row(s) imported`);
+  await loadAll();
+  renderExpensesView();
+  $('importResult').innerHTML = `Added ${added} expense${added===1?'':'s'}.` +
+    (skipped.length ? `<br>Skipped ${skipped.length}: ${skipped.slice(0,6).join('; ')}${skipped.length>6?'…':''}` : '');
+  if (added) $('impRows').value = '';
+  toast(added ? `Imported ${added} constant expense${added===1?'':'s'}` : 'Nothing imported — check the format');
 });
 
 /* ---------------- Unit detail page ("its own tab") ---------------- */
@@ -1610,8 +1817,109 @@ $('btnCsv').addEventListener('click', ()=>{
   a.click();
 });
 
+/* ---------------- One-time seed: buildings & units (from the summary sheet) ---------------- */
+const SEED_BUILDINGS = ['Beacon', 'AIR', 'Parksuites', 'ONE UPTOWN'];
+const SEED_UNITS = [
+  { name:'3715',   building:'Beacon' },
+  { name:'3220',   building:'Beacon' },
+  { name:'3318',   building:'Beacon' },
+  { name:'3319',   building:'Beacon' },
+  { name:'LP 125', building:'Beacon' },
+  { name:'4418',   building:'Beacon' },
+  { name:'LP121',  building:'Beacon' },
+  { name:'2906',   building:'AIR' },
+  { name:'3432',   building:'AIR' },
+  { name:'5651',   building:'AIR' },
+  { name:'2705',   building:'AIR' },
+  { name:'7S',     building:'Parksuites' },
+  { name:'27I',    building:'Parksuites' },
+  { name:'18D1',   building:'ONE UPTOWN' },
+];
+
+async function autoSeedBuildingsAndUnits(){
+  let addedB = 0;
+  for (const name of SEED_BUILDINGS){
+    const exists = state.buildings.some(b => b.name.trim().toLowerCase() === name.toLowerCase());
+    if (!exists){
+      try{ await apiPost('addBuilding', { name, notes:'' }); addedB++; }
+      catch(err){ console.error('Seed building failed:', name, err); }
+    }
+  }
+  if (addedB) await loadAll();
+
+  let addedU = 0;
+  for (const row of SEED_UNITS){
+    const bld = state.buildings.find(b => b.name.trim().toLowerCase() === row.building.toLowerCase());
+    if (!bld) continue;
+    const exists = state.units.some(u => u.name.trim().toLowerCase() === row.name.toLowerCase() && u.buildingId === bld.id);
+    if (!exists){
+      try{ await apiPost('addUnit', { name: row.name, buildingId: bld.id, status:'Active', notes:'' }); addedU++; }
+      catch(err){ console.error('Seed unit failed:', row.name, err); }
+    }
+  }
+  if (addedU) await loadAll();
+
+  if (addedB || addedU) logActivity('created', 'Setup', `${addedB} building(s), ${addedU} unit(s) auto-created`);
+}
+
+/* ---------------- One-time seed: constant expenses pulled from the per-unit sheet tabs ---------------- */
+const SEED_CONSTANT_EXPENSES = [
+  { unit:'3715',  category:'Lease',    amount:20000 },
+  { unit:'3715',  category:'Internet', amount:1699 },
+  { unit:'3220',  category:'Lease',    amount:16000 },
+  { unit:'3220',  category:'Internet', amount:780 },
+  { unit:'3318',  category:'Lease',    amount:30000 },
+  { unit:'3318',  category:'Internet', amount:780 },
+  { unit:'3319',  category:'Lease',    amount:16000 },
+  { unit:'3319',  category:'Internet', amount:780 },
+  { unit:'LP 125',category:'Lease',    amount:20000 },
+  { unit:'LP 125',category:'Internet', amount:1299 },
+  { unit:'4418',  category:'Lease',    amount:20000 },
+  { unit:'4418',  category:'Internet', amount:1699 },
+  { unit:'LP121', category:'Lease',    amount:20000 },
+  { unit:'LP121', category:'Internet', amount:1600 },
+  { unit:'2906',  category:'Lease',    amount:20000 },
+  { unit:'2906',  category:'Internet', amount:250 },
+  { unit:'3432',  category:'Lease',    amount:15000 },
+  { unit:'3432',  category:'Internet', amount:250 },
+  { unit:'5651',  category:'Internet', amount:250 },
+  { unit:'27I',   category:'Internet', amount:1699 },
+  { unit:'27I',   category:'Laundry',  amount:1000 },
+  { unit:'7S',    category:'Lease',    amount:40000 },
+  { unit:'7S',    category:'Internet', amount:1699 },
+  { unit:'7S',    category:'Laundry',  amount:1000 },
+  { unit:'18D1',  category:'Lease',    amount:35000 },
+  { unit:'18D1',  category:'Internet', amount:1499 },
+  { unit:'18D1',  category:'Laundry',  amount:1000 },
+];
+async function autoImportSeedExpenses(){
+  let added = 0, matchedUnits = 0;
+  for (const row of SEED_CONSTANT_EXPENSES){
+    const unit = state.units.find(u => u.name.trim().toLowerCase() === row.unit.trim().toLowerCase());
+    if (!unit) continue;
+    matchedUnits++;
+    const already = constantExpensesForUnit(unit.id)
+      .some(c => (c.category||'').trim().toLowerCase() === row.category.trim().toLowerCase());
+    if (already) continue;
+    try{
+      await apiPost('addConstantExpense', { unitId: unit.id, category: row.category, amount: row.amount, status:'Active', notes:'Imported from unit expense sheet' });
+      added++;
+    }catch(err){ console.error('Seed import failed for', row, err); }
+  }
+  if (added){
+    logActivity('created', 'Constant expense', `${added} row(s) auto-imported from unit sheets`);
+    await loadAll();
+    toast(`Imported ${added} constant expense${added===1?'':'s'} from your unit sheets`);
+  } else if (matchedUnits === 0 && SEED_CONSTANT_EXPENSES.length){
+    console.info('Seed import: no matching units found yet — add your units first, then reload.');
+  }
+}
+
 /* ---------------- Init ---------------- */
-loadAll();
+loadAll().then(async ()=>{
+  await autoSeedBuildingsAndUnits();
+  await autoImportSeedExpenses();
+});
 </script>
 </body>
 </html>
