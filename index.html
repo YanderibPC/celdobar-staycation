@@ -629,7 +629,7 @@
    ========================================================= */
 // Connected to "Celdobar Ledger DB"
 // (docs.google.com/spreadsheets/d/1k79rP7pElJmGOE6ZD-6wl6rqkOg6NjlT5vUhJ_hMYOk)
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwbzthuQpresUFunSl0jdI-WfvXQPU929ASqvz-EDQZNVRliLOmARVUEiBacdrZ4H83dw/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx6WE1bpdNSXqQjAYVJNafJSew986GVykw5TMrss1y3i_N4FubGVgCSYXhue-1QovbKig/exec";
 
 const BUILDING_PALETTE = [
   ['--b-teal','--b-teal-dim'], ['--b-indigo','--b-indigo-dim'], ['--b-amber','--b-amber-dim'],
@@ -720,7 +720,9 @@ async function apiPost(action, payload){
     headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // avoids CORS preflight on Apps Script
     body: JSON.stringify({ action, payload })
   });
-  return res.json();
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || (action + ' failed'));
+  return data;
 }
 
 async function loadAll(){
