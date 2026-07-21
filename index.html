@@ -1007,7 +1007,13 @@ function renderUnits(){
         </tr>`;
       }).join('') : `<tr><td colspan="6" style="color:var(--muted);font-size:13px;">No units match this filter.</td></tr>`;
     return `<div class="card section-gap" style="border-left:4px solid ${col?col.color:'var(--primary)'}">
-      <div style="padding:14px 16px 4px;"><b class="display" style="font-size:16px;">${b.name}</b></div>
+      <div class="flex-between" style="padding:14px 16px 4px;margin-bottom:0;">
+        <b class="display" style="font-size:16px;">${b.name}</b>
+        <div class="row-actions">
+          <button class="icon-btn" title="Edit building" onclick="openBuildingModal('${b.id}')">✎</button>
+          <button class="icon-btn" title="Delete building" onclick="deleteBuilding('${b.id}')">🗑</button>
+        </div>
+      </div>
       <div class="table-wrap">
         <table class="unit-table">
           <thead><tr>
