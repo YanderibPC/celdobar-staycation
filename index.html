@@ -264,6 +264,7 @@
       <div class="brand-text"><b>Celdobar</b><span>Staycation Ledger</span></div>
     </div>
     <button class="nav-item active" data-view="dashboard"><span class="nav-icon">◆</span> Dashboard</button>
+    <button class="nav-item" data-view="smartimport"><span class="nav-icon">⚡</span> Smart Import</button>
     <button class="nav-item" data-view="buildings"><span class="nav-icon">▣</span> Buildings</button>
     <button class="nav-item" data-view="units"><span class="nav-icon">▢</span> Units</button>
     <button class="nav-item" data-view="cashflow"><span class="nav-icon">▥</span> Cash Flow</button>
@@ -369,6 +370,53 @@
           <div class="em-icon">📭</div>
           No entries match these filters yet.
         </div>
+      </div>
+    </section>
+
+    <!-- SMART IMPORT -->
+    <section id="view-smartimport" style="display:none;">
+      <div class="page-head">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="brand-mark" id="siLogoMark" style="width:44px;height:44px;border-radius:11px;"></div>
+          <div><h1>Smart Import</h1><p class="page-sub">One box. Paste anything — buildings, units, transactions, or recurring expenses — mixed together, in any order. Celdobar figures out where each row belongs.</p></div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:18px; margin-bottom:20px;">
+        <div class="field-row" style="margin-bottom:14px;">
+          <div class="field" style="margin-bottom:0;">
+            <label>Buildings</label>
+            <div class="page-sub" style="margin:0;"><code>Name</code> or <code>Name, Notes</code></div>
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Units</label>
+            <div class="page-sub" style="margin:0;"><code>Unit, Building</code> or <code>Unit, Building, Status, Notes</code></div>
+          </div>
+        </div>
+        <div class="field-row" style="margin-bottom:14px;">
+          <div class="field" style="margin-bottom:0;">
+            <label>Recurring / constant expenses</label>
+            <div class="page-sub" style="margin:0;"><code>Unit, Category, Amount</code></div>
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Income / expense transactions</label>
+            <div class="page-sub" style="margin:0;"><code>Income or Expense, Unit, Date, Amount, Category, Notes</code></div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Paste your rows — any mix, any order, one per line</label>
+          <textarea id="siRows" rows="12" placeholder="Beacon, New tower on Shaw&#10;3220, Beacon, Active&#10;3220, Cleaning, 1200&#10;Income, 3220, 2026-01-01, 16187.69, Monthly bookings&#10;Expense, 3220, 01/15/2026, 800, Cleaning, Ad-hoc turnover"></textarea>
+        </div>
+        <div class="modal-foot" style="margin-top:8px;">
+          <button class="btn primary" id="btnSmartImport">Auto-Import Everything</button>
+          <button class="btn ghost" id="btnSmartImportClear">Clear</button>
+        </div>
+        <div id="siResult" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="card" style="padding:16px 18px;">
+        <h3 style="margin:0 0 6px;font-size:14.5px;">How the detection works</h3>
+        <p class="page-sub" style="margin:0;">Each line is read independently. If it starts with <b>Income</b> or <b>Expense</b> and matches an existing unit plus a date, it's logged as a transaction. If it matches an existing unit plus a plain amount, it's added as a recurring expense. If it matches an existing building name plus a new unit name, a unit is created there. Otherwise, if it looks like a standalone name, a new building is created. Rows Celdobar can't confidently place are skipped and listed below so nothing is added silently to the wrong place — add the missing building/unit first, then re-paste that row.</p>
       </div>
     </section>
 
@@ -1990,6 +2038,168 @@ $('btnImportRowsEntries').addEventListener('click', async ()=>{
     (skipped.length ? `<br>Skipped ${skipped.length}: ${skipped.slice(0,6).join('; ')}${skipped.length>6?'…':''}` : '');
   if (added) $('impRowsEntries').value = '';
   toast(added ? `Imported ${added} entr${added===1?'y':'ies'}` : 'Nothing imported — check the format');
+});
+
+/* ---------------- Smart Import: auto-detect row type and route to the right tab ---------------- */
+(function(){
+  const logoImg = document.querySelector('.brand-mark img');
+  const mark = document.getElementById('siLogoMark');
+  if (logoImg && mark){
+    const img = document.createElement('img');
+    img.src = logoImg.src; img.alt = 'Celdobar';
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+    mark.appendChild(img);
+  }
+})();
+
+function siIsDateLike(s){
+  if (!s) return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) || /^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$/.test(s);
+}
+function siIsAmountLike(s){
+  if (!s) return false;
+  const cleaned = s.replace(/[₱$,\s]/g,'').replace(/^php/i,'');
+  return /^-?\d+(\.\d+)?$/.test(cleaned) && cleaned !== '';
+}
+function siParseAmount(s){ return parseFloat(s.replace(/[^\d.\-]/g,'')); }
+function siFindUnit(p){ return state.units.find(u => u.name.toLowerCase() === p.toLowerCase()); }
+function siFindBuilding(b){ return state.buildings.find(x => x.name.toLowerCase() === b.toLowerCase()); }
+
+/* Reads one pasted line and figures out whether it's a Building, Unit, Constant Expense,
+   or Income/Expense Entry — regardless of which order the columns are in — then returns a
+   descriptor the importer can act on. Returns {kind:'unknown', reason} if it can't tell. */
+function siDetectRow(line){
+  const parts = line.split(',').map(s=>s.trim()).filter((s,i,arr)=> !(s==='' && i===arr.length-1));
+  if (!parts.length || !parts[0]) return { kind:'unknown', reason:'empty row' };
+
+  const typeIdx = parts.findIndex(p => /^income$/i.test(p) || /^expense$/i.test(p));
+  const unitIdx = parts.findIndex(p => siFindUnit(p));
+  const buildingIdx = parts.findIndex(p => siFindBuilding(p));
+  const dateIdx = parts.findIndex((p,i)=> i!==typeIdx && siIsDateLike(p));
+  const amountIdx = parts.findIndex((p,i)=> i!==dateIdx && siIsAmountLike(p));
+
+  // 1) TRANSACTION: Income/Expense keyword + known unit + date + amount, in any order
+  if (typeIdx !== -1 && unitIdx !== -1 && dateIdx !== -1 && amountIdx !== -1 && unitIdx!==dateIdx && unitIdx!==amountIdx){
+    const type = /^income$/i.test(parts[typeIdx]) ? 'Income' : 'Expense';
+    const unit = siFindUnit(parts[unitIdx]);
+    const date = parseFlexibleDate(parts[dateIdx]);
+    const amount = siParseAmount(parts[amountIdx]);
+    const used = new Set([typeIdx, unitIdx, dateIdx, amountIdx]);
+    const rest = parts.filter((_,i)=>!used.has(i));
+    const category = rest[0] || '';
+    const notes = rest.slice(1).join(', ');
+    if (!date) return { kind:'unknown', reason:`"${line}" — couldn't read the date` };
+    return { kind:'entry', line, data:{ unitId: unit.id, type, date, amount, category, notes } };
+  }
+
+  // 2) CONSTANT EXPENSE: known unit + plain amount, no date, no Income/Expense keyword
+  if (typeIdx === -1 && dateIdx === -1 && unitIdx !== -1 && amountIdx !== -1 && unitIdx !== amountIdx){
+    const unit = siFindUnit(parts[unitIdx]);
+    const used = new Set([unitIdx, amountIdx]);
+    const rest = parts.filter((_,i)=>!used.has(i));
+    const category = rest.join(', ');
+    const amount = siParseAmount(parts[amountIdx]);
+    if (!category) return { kind:'unknown', reason:`"${line}" — missing a category for the expense` };
+    return { kind:'expense', line, data:{ unitId: unit.id, category, amount, status:'Active', notes:'' } };
+  }
+
+  // 3) UNIT: first token is a NEW unit name + a token matches an existing building
+  if (buildingIdx !== -1 && unitIdx === -1){
+    const building = siFindBuilding(parts[buildingIdx]);
+    const nameIdx = parts.findIndex((p,i)=> i!==buildingIdx && !/^(active|inactive)$/i.test(p));
+    if (nameIdx === -1) return { kind:'unknown', reason:`"${line}" — missing a unit name` };
+    const name = parts[nameIdx];
+    const statusRaw = parts.find(p => /^(active|inactive)$/i.test(p));
+    const status = statusRaw && /^inactive$/i.test(statusRaw) ? 'Inactive' : 'Active';
+    const used = new Set([buildingIdx, nameIdx]);
+    parts.forEach((p,i)=>{ if (/^(active|inactive)$/i.test(p)) used.add(i); });
+    const notes = parts.filter((_,i)=>!used.has(i)).join(', ');
+    return { kind:'unit', line, data:{ name, buildingId: building.id, status, notes } };
+  }
+
+  // 4) BUILDING: a short, standalone-looking name that isn't already a unit or building
+  if (unitIdx === -1 && buildingIdx === -1 && parts.length <= 2 && !siIsAmountLike(parts[0]) && !siIsDateLike(parts[0])){
+    const name = parts[0];
+    const notes = parts.slice(1).join(', ');
+    if (siFindBuilding(name)) return { kind:'unknown', reason:`"${name}" — building already exists` };
+    return { kind:'building', line, data:{ name, notes } };
+  }
+
+  if (unitIdx === -1 && buildingIdx === -1){
+    return { kind:'unknown', reason:`"${line}" — no matching unit or building name found; add that first` };
+  }
+  return { kind:'unknown', reason:`"${line}" — couldn't tell what kind of row this is` };
+}
+
+$('btnSmartImportClear').addEventListener('click', ()=>{ $('siRows').value=''; $('siResult').innerHTML=''; });
+
+$('btnSmartImport').addEventListener('click', async ()=>{
+  const raw = $('siRows').value.trim();
+  if (!raw){ toast('Paste some rows first.'); return; }
+  const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
+  $('btnSmartImport').disabled = true;
+  $('siResult').innerHTML = `<span class="page-sub">Reading ${lines.length} row${lines.length===1?'':'s'}…</span>`;
+
+  const counts = { building:0, unit:0, expense:0, entry:0 };
+  const skipped = [];
+
+  // Pass 1: detect every row against current state.
+  const detected = lines.map(siDetectRow);
+
+  // Buildings first (so unit rows referencing a brand-new building in the same paste can match it).
+  for (const d of detected){
+    if (d.kind !== 'building') continue;
+    try{ await apiPost('addBuilding', d.data); counts.building++; state.buildings.push({ id:'tmp'+Math.random(), name:d.data.name, notes:d.data.notes }); }
+    catch(err){ skipped.push(`${d.line} — save failed`); }
+  }
+  if (counts.building) await loadAll();
+
+  // Units next (so expense/entry rows referencing a brand-new unit in the same paste can match it).
+  for (const d of detected){
+    if (d.kind !== 'unit') continue;
+    const already = state.units.some(u => u.name.toLowerCase()===d.data.name.toLowerCase() && u.buildingId===d.data.buildingId);
+    if (already){ skipped.push(`${d.line} — unit already exists`); continue; }
+    try{ await apiPost('addUnit', d.data); counts.unit++; state.units.push({ id:'tmp'+Math.random(), name:d.data.name, buildingId:d.data.buildingId, status:d.data.status }); }
+    catch(err){ skipped.push(`${d.line} — save failed`); }
+  }
+  if (counts.unit) await loadAll();
+
+  // Re-run detection for any row that failed only because it referenced a unit/building added above.
+  for (let i=0;i<detected.length;i++){
+    if (detected[i].kind !== 'unknown') continue;
+    const retry = siDetectRow(lines[i]);
+    if (retry.kind !== 'unknown') detected[i] = retry;
+  }
+
+  for (const d of detected){
+    if (d.kind === 'expense'){
+      try{ await apiPost('addConstantExpense', d.data); counts.expense++; }
+      catch(err){ skipped.push(`${d.line} — save failed`); }
+    } else if (d.kind === 'entry'){
+      try{ await apiPost('addEntry', d.data); counts.entry++; }
+      catch(err){ skipped.push(`${d.line} — save failed`); }
+    } else if (d.kind === 'unknown'){
+      skipped.push(d.reason);
+    }
+  }
+
+  $('btnSmartImport').disabled = false;
+  const totalAdded = counts.building + counts.unit + counts.expense + counts.entry;
+  const parts = [];
+  if (counts.building) parts.push(`${counts.building} building${counts.building===1?'':'s'}`);
+  if (counts.unit) parts.push(`${counts.unit} unit${counts.unit===1?'':'s'}`);
+  if (counts.expense) parts.push(`${counts.expense} recurring expense${counts.expense===1?'':'s'}`);
+  if (counts.entry) parts.push(`${counts.entry} transaction${counts.entry===1?'':'s'}`);
+  if (totalAdded) logActivity('created', 'Smart import', `${totalAdded} row(s): ${parts.join(', ')}`);
+
+  await loadAll();
+  renderExpensesView();
+
+  $('siResult').innerHTML =
+    `<div class="page-sub" style="margin-bottom:6px;"><b style="color:var(--ink);">${totalAdded}</b> row${totalAdded===1?'':'s'} added${parts.length?' — '+parts.join(', '):''}.</div>` +
+    (skipped.length ? `<div class="page-sub">Skipped ${skipped.length}:<br>${skipped.slice(0,12).map(s=>`• ${s}`).join('<br>')}${skipped.length>12?'<br>…':''}</div>` : '');
+  toast(totalAdded ? `Auto-imported ${totalAdded} row${totalAdded===1?'':'s'}` : 'Nothing imported — check the format');
+  if (totalAdded) $('siRows').value = '';
 });
 
 /* ---------------- One-time seed: buildings & units (from the summary sheet) ---------------- */
