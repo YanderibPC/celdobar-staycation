@@ -1915,10 +1915,176 @@ async function autoImportSeedExpenses(){
   }
 }
 
+/* ---------------- One-time seed: monthly income & variable expenses (Electricity/Water/Cleaning) ---------------- */
+/* Lease/Internet/Laundry are intentionally excluded here — they're already running as
+   recurring constant expenses above, so re-adding them monthly would double-count them. */
+const SEED_ENTRIES = [
+  // 3715
+  {unit:'3715', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:16187.69},
+  {unit:'3715', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:12628.59},
+  {unit:'3715', date:'2026-03-01', type:'Income',  category:'Monthly bookings', amount:21508.35},
+  {unit:'3715', date:'2026-04-01', type:'Income',  category:'Monthly bookings', amount:10016.10},
+  {unit:'3715', date:'2026-01-01', type:'Expense', category:'Water',       amount:167.95},
+  {unit:'3715', date:'2026-01-01', type:'Expense', category:'Cleaning',    amount:2000},
+  {unit:'3715', date:'2026-02-01', type:'Expense', category:'Cleaning',    amount:800},
+  {unit:'3715', date:'2026-03-01', type:'Expense', category:'Electricity',amount:1754},
+  {unit:'3715', date:'2026-03-01', type:'Expense', category:'Water',       amount:74},
+  // 3220
+  {unit:'3220', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:10719.22},
+  {unit:'3220', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:11450.06},
+  {unit:'3220', date:'2026-03-01', type:'Income',  category:'Monthly bookings', amount:16186.59},
+  {unit:'3220', date:'2026-04-01', type:'Income',  category:'Monthly bookings', amount:15327.11},
+  {unit:'3220', date:'2026-01-01', type:'Expense', category:'Electricity',amount:4883.56},
+  {unit:'3220', date:'2026-01-01', type:'Expense', category:'Water',       amount:33.59},
+  {unit:'3220', date:'2026-01-01', type:'Expense', category:'Cleaning',    amount:1600},
+  {unit:'3220', date:'2026-02-01', type:'Expense', category:'Electricity',amount:4884.00},
+  {unit:'3220', date:'2026-02-01', type:'Expense', category:'Cleaning',    amount:1600},
+  {unit:'3220', date:'2026-03-01', type:'Expense', category:'Electricity',amount:1074.00},
+  {unit:'3220', date:'2026-03-01', type:'Expense', category:'Water',       amount:37.00},
+  // 3318
+  {unit:'3318', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:60350.74},
+  {unit:'3318', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:30643.40},
+  {unit:'3318', date:'2026-04-01', type:'Income',  category:'Monthly bookings', amount:20537.18},
+  {unit:'3318', date:'2026-05-01', type:'Income',  category:'Monthly bookings', amount:53778.22},
+  {unit:'3318', date:'2026-01-01', type:'Expense', category:'Electricity',amount:2477.81},
+  {unit:'3318', date:'2026-01-01', type:'Expense', category:'Cleaning',    amount:800},
+  {unit:'3318', date:'2026-02-01', type:'Expense', category:'Electricity',amount:1339.00},
+  {unit:'3318', date:'2026-02-01', type:'Expense', category:'Water',       amount:212.00},
+  {unit:'3318', date:'2026-02-01', type:'Expense', category:'Cleaning',    amount:1200},
+  {unit:'3318', date:'2026-03-01', type:'Expense', category:'Electricity',amount:3985.00},
+  {unit:'3318', date:'2026-03-01', type:'Expense', category:'Cleaning',    amount:2166.67},
+  // 3319
+  {unit:'3319', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:10345.59},
+  {unit:'3319', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:11434.84},
+  {unit:'3319', date:'2026-03-01', type:'Income',  category:'Monthly bookings', amount:17730.95},
+  {unit:'3319', date:'2026-04-01', type:'Income',  category:'Monthly bookings', amount:8231.34},
+  {unit:'3319', date:'2026-05-01', type:'Income',  category:'Monthly bookings', amount:25587.66},
+  {unit:'3319', date:'2026-01-01', type:'Expense', category:'Electricity',amount:1339.00},
+  {unit:'3319', date:'2026-01-01', type:'Expense', category:'Cleaning',    amount:1200},
+  {unit:'3319', date:'2026-02-01', type:'Expense', category:'Cleaning',    amount:1200},
+  {unit:'3319', date:'2026-03-01', type:'Expense', category:'Electricity',amount:1890.00},
+  {unit:'3319', date:'2026-03-01', type:'Expense', category:'Cleaning',    amount:2166.67},
+  // LP 125
+  {unit:'LP 125', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:2980.38},
+  {unit:'LP 125', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:26475.60},
+  {unit:'LP 125', date:'2026-01-01', type:'Expense', category:'Water',    amount:110.14},
+  {unit:'LP 125', date:'2026-01-01', type:'Expense', category:'Cleaning', amount:400},
+  {unit:'LP 125', date:'2026-02-01', type:'Expense', category:'Cleaning', amount:2000},
+  // 4418
+  {unit:'4418', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:20445.97},
+  {unit:'4418', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:29208.00},
+  {unit:'4418', date:'2026-03-01', type:'Income',  category:'Monthly bookings', amount:29000.00},
+  {unit:'4418', date:'2026-04-01', type:'Income',  category:'Monthly bookings', amount:19652.83},
+  {unit:'4418', date:'2026-01-01', type:'Expense', category:'Electricity',amount:5496.77},
+  {unit:'4418', date:'2026-01-01', type:'Expense', category:'Water',       amount:42.55},
+  {unit:'4418', date:'2026-01-01', type:'Expense', category:'Cleaning',    amount:400},
+  {unit:'4418', date:'2026-02-01', type:'Expense', category:'Electricity',amount:5436.00},
+  {unit:'4418', date:'2026-03-01', type:'Expense', category:'Cleaning',    amount:2166.67},
+  // LP121
+  {unit:'LP121', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:19601.15},
+  {unit:'LP121', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:15104.95},
+  {unit:'LP121', date:'2026-03-01', type:'Income',  category:'Monthly bookings', amount:28558.78},
+  {unit:'LP121', date:'2026-04-01', type:'Income',  category:'Monthly bookings', amount:27500.00},
+  {unit:'LP121', date:'2026-01-01', type:'Expense', category:'Electricity',amount:2076.23},
+  {unit:'LP121', date:'2026-01-01', type:'Expense', category:'Water',       amount:110.40},
+  {unit:'LP121', date:'2026-01-01', type:'Expense', category:'Cleaning',    amount:2800},
+  {unit:'LP121', date:'2026-02-01', type:'Expense', category:'Electricity',amount:2958.00},
+  // 2906
+  {unit:'2906', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:20387.40},
+  {unit:'2906', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:12076.44},
+  {unit:'2906', date:'2026-03-01', type:'Income',  category:'Monthly bookings', amount:36600.00},
+  {unit:'2906', date:'2026-04-01', type:'Income',  category:'Monthly bookings', amount:28000.00},
+  {unit:'2906', date:'2026-05-01', type:'Income',  category:'Monthly bookings', amount:28000.00},
+  {unit:'2906', date:'2026-01-01', type:'Expense', category:'Water',    amount:171.49},
+  {unit:'2906', date:'2026-01-01', type:'Expense', category:'Cleaning', amount:2400},
+  {unit:'2906', date:'2026-02-01', type:'Expense', category:'Cleaning', amount:1200},
+  // 3432
+  {unit:'3432', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:11948.15},
+  {unit:'3432', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:14815.45},
+  {unit:'3432', date:'2026-03-01', type:'Income',  category:'Monthly bookings', amount:20818.58},
+  {unit:'3432', date:'2026-04-01', type:'Income',  category:'Monthly bookings', amount:1639.01},
+  {unit:'3432', date:'2026-01-01', type:'Expense', category:'Water',       amount:306.16},
+  {unit:'3432', date:'2026-01-01', type:'Expense', category:'Cleaning',    amount:2000},
+  {unit:'3432', date:'2026-02-01', type:'Expense', category:'Cleaning',    amount:400},
+  {unit:'3432', date:'2026-03-01', type:'Expense', category:'Electricity',amount:1751.16},
+  {unit:'3432', date:'2026-03-01', type:'Expense', category:'Water',       amount:78.00},
+  {unit:'3432', date:'2026-03-01', type:'Expense', category:'Cleaning',    amount:800},
+  // 5651
+  {unit:'5651', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:27734.31},
+  {unit:'5651', date:'2026-03-01', type:'Income',  category:'Monthly bookings', amount:9284.90},
+  {unit:'5651', date:'2026-04-01', type:'Income',  category:'Monthly bookings', amount:10246.82},
+  {unit:'5651', date:'2026-01-01', type:'Expense', category:'Electricity',amount:2994.86},
+  {unit:'5651', date:'2026-01-01', type:'Expense', category:'Water',       amount:9992.10},
+  {unit:'5651', date:'2026-01-01', type:'Expense', category:'Cleaning',    amount:2400},
+  {unit:'5651', date:'2026-02-01', type:'Expense', category:'Electricity',amount:3260.00},
+  {unit:'5651', date:'2026-03-01', type:'Expense', category:'Electricity',amount:1317.00},
+  {unit:'5651', date:'2026-03-01', type:'Expense', category:'Water',       amount:3407.00},
+  {unit:'5651', date:'2026-03-01', type:'Expense', category:'Cleaning',    amount:1200},
+  // 2705
+  {unit:'2705', date:'2026-04-01', type:'Income',  category:'Monthly bookings', amount:10432.76},
+  // 27I
+  {unit:'27I', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:61099.44},
+  {unit:'27I', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:34323.31},
+  {unit:'27I', date:'2026-03-01', type:'Income',  category:'Monthly bookings', amount:40727.77},
+  {unit:'27I', date:'2026-01-01', type:'Expense', category:'Electricity',amount:4906.55},
+  {unit:'27I', date:'2026-01-01', type:'Expense', category:'Cleaning',    amount:1200},
+  {unit:'27I', date:'2026-02-01', type:'Expense', category:'Lease',       amount:45000},
+  {unit:'27I', date:'2026-02-01', type:'Expense', category:'Electricity',amount:2979.00},
+  {unit:'27I', date:'2026-02-01', type:'Expense', category:'Cleaning',    amount:2400},
+  {unit:'27I', date:'2026-03-01', type:'Expense', category:'Electricity',amount:4639.30},
+  {unit:'27I', date:'2026-03-01', type:'Expense', category:'Cleaning',    amount:500},
+  // 7S
+  {unit:'7S', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:65436.41},
+  {unit:'7S', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:50865.42},
+  {unit:'7S', date:'2026-03-01', type:'Income',  category:'Monthly bookings', amount:33379.39},
+  {unit:'7S', date:'2026-04-01', type:'Income',  category:'Monthly bookings', amount:5203.10},
+  {unit:'7S', date:'2026-01-01', type:'Expense', category:'Electricity',amount:8526.95},
+  {unit:'7S', date:'2026-01-01', type:'Expense', category:'Cleaning',    amount:3600},
+  {unit:'7S', date:'2026-02-01', type:'Expense', category:'Electricity',amount:6795.00},
+  {unit:'7S', date:'2026-02-01', type:'Expense', category:'Cleaning',    amount:3600},
+  {unit:'7S', date:'2026-03-01', type:'Expense', category:'Electricity',amount:7511.39},
+  {unit:'7S', date:'2026-03-01', type:'Expense', category:'Cleaning',    amount:500},
+  // 18D1
+  {unit:'18D1', date:'2026-01-01', type:'Income',  category:'Monthly bookings', amount:44260.79},
+  {unit:'18D1', date:'2026-02-01', type:'Income',  category:'Monthly bookings', amount:54469.25},
+  {unit:'18D1', date:'2026-03-01', type:'Income',  category:'Monthly bookings', amount:52952.21},
+  {unit:'18D1', date:'2026-01-01', type:'Expense', category:'Electricity',amount:8526.95},
+  {unit:'18D1', date:'2026-01-01', type:'Expense', category:'Cleaning',    amount:3200},
+  {unit:'18D1', date:'2026-02-01', type:'Expense', category:'Cleaning',    amount:3200},
+  {unit:'18D1', date:'2026-03-01', type:'Expense', category:'Electricity',amount:5673.14},
+  {unit:'18D1', date:'2026-03-01', type:'Expense', category:'Cleaning',    amount:3800},
+];
+
+async function autoImportSeedEntries(){
+  let added = 0, matchedUnits = 0;
+  for (const row of SEED_ENTRIES){
+    const unit = state.units.find(u => u.name.trim().toLowerCase() === row.unit.trim().toLowerCase());
+    if (!unit) continue;
+    matchedUnits++;
+    const already = state.entries.some(e =>
+      e.unitId === unit.id && e.date === row.date && e.type === row.type &&
+      (e.category||'').trim().toLowerCase() === row.category.trim().toLowerCase()
+    );
+    if (already) continue;
+    try{
+      await apiPost('addEntry', { unitId: unit.id, type: row.type, date: row.date, amount: row.amount, category: row.category, notes:'Imported from unit expense sheet' });
+      added++;
+    }catch(err){ console.error('Seed entry import failed for', row, err); }
+  }
+  if (added){
+    logActivity('created', 'Entry', `${added} row(s) auto-imported from unit sheets`);
+    await loadAll();
+    toast(`Imported ${added} income/expense entr${added===1?'y':'ies'} from your unit sheets`);
+  } else if (matchedUnits === 0 && SEED_ENTRIES.length){
+    console.info('Seed entry import: no matching units found yet — add your units first, then reload.');
+  }
+}
+
 /* ---------------- Init ---------------- */
 loadAll().then(async ()=>{
   await autoSeedBuildingsAndUnits();
   await autoImportSeedExpenses();
+  await autoImportSeedEntries();
 });
 </script>
 </body>
