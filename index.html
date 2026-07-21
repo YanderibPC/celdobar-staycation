@@ -2133,57 +2133,77 @@ function siDetectRow(line){
 
 $('btnSmartImportClear').addEventListener('click', ()=>{ $('siRows').value=''; $('siResult').innerHTML=''; });
 
+/* Runs `worker` over `items` with up to `concurrency` requests in flight at once —
+   this is what makes big pastes fast, since each row no longer waits for the
+   previous row's full round-trip to Apps Script before starting. */
+async function siRunPool(items, worker, concurrency){
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function lane(){
+    while (cursor < items.length){
+      const idx = cursor++;
+      try{ results[idx] = await worker(items[idx], idx); }
+      catch(err){ results[idx] = { __error: err }; }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, lane));
+  return results;
+}
+
 $('btnSmartImport').addEventListener('click', async ()=>{
   const raw = $('siRows').value.trim();
   if (!raw){ toast('Paste some rows first.'); return; }
   const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
   $('btnSmartImport').disabled = true;
-  $('siResult').innerHTML = `<span class="page-sub">Reading ${lines.length} row${lines.length===1?'':'s'}…</span>`;
+  const setProgress = msg => { $('siResult').innerHTML = `<span class="page-sub">${msg}</span>`; };
+  setProgress(`Reading ${lines.length} row${lines.length===1?'':'s'}…`);
 
   const counts = { building:0, unit:0, expense:0, entry:0 };
   const skipped = [];
 
-  // Pass 1: detect every row against current state.
-  const detected = lines.map(siDetectRow);
+  // Detect every row against current state. Rows that depend on a building/unit created
+  // later in this same paste come back as 'unknown' for now — they're re-checked after
+  // the phase that would have created their dependency.
+  let detected = lines.map(siDetectRow);
 
-  // Buildings first (so unit rows referencing a brand-new building in the same paste can match it).
-  for (const d of detected){
-    if (d.kind !== 'building') continue;
-    try{ await apiPost('addBuilding', d.data); counts.building++; state.buildings.push({ id:'tmp'+Math.random(), name:d.data.name, notes:d.data.notes }); }
-    catch(err){ skipped.push(`${d.line} — save failed`); }
-  }
-  if (counts.building) await loadAll();
-
-  // Units next (so expense/entry rows referencing a brand-new unit in the same paste can match it).
-  for (const d of detected){
-    if (d.kind !== 'unit') continue;
-    const already = state.units.some(u => u.name.toLowerCase()===d.data.name.toLowerCase() && u.buildingId===d.data.buildingId);
-    if (already){ skipped.push(`${d.line} — unit already exists`); continue; }
-    try{ await apiPost('addUnit', d.data); counts.unit++; state.units.push({ id:'tmp'+Math.random(), name:d.data.name, buildingId:d.data.buildingId, status:d.data.status }); }
-    catch(err){ skipped.push(`${d.line} — save failed`); }
-  }
-  if (counts.unit) await loadAll();
-
-  // Re-run detection for any row that failed only because it referenced a unit/building added above.
-  for (let i=0;i<detected.length;i++){
-    if (detected[i].kind !== 'unknown') continue;
-    const retry = siDetectRow(lines[i]);
-    if (retry.kind !== 'unknown') detected[i] = retry;
+  // Phase 1 — buildings, all sent at once (bounded concurrency).
+  const buildingRows = detected.map((d,i)=>({d,i})).filter(x=>x.d.kind==='building');
+  if (buildingRows.length){
+    setProgress(`Adding ${buildingRows.length} building${buildingRows.length===1?'':'s'}…`);
+    const results = await siRunPool(buildingRows, x => apiPost('addBuilding', x.d.data), 6);
+    results.forEach((r,i)=>{ if (r && r.__error) skipped.push(`${buildingRows[i].d.line} — save failed`); else counts.building++; });
+    await loadAll(); // refresh so newly created buildings have real IDs to match against
+    detected = lines.map((line,i)=> detected[i].kind==='unknown' ? siDetectRow(line) : detected[i]);
   }
 
-  for (const d of detected){
-    if (d.kind === 'expense'){
-      try{ await apiPost('addConstantExpense', d.data); counts.expense++; }
-      catch(err){ skipped.push(`${d.line} — save failed`); }
-    } else if (d.kind === 'entry'){
-      try{ await apiPost('addEntry', d.data); counts.entry++; }
-      catch(err){ skipped.push(`${d.line} — save failed`); }
-    } else if (d.kind === 'unknown'){
-      skipped.push(d.reason);
-    }
+  // Phase 2 — units, all sent at once.
+  const unitRows = detected.map((d,i)=>({d,i})).filter(x=>{
+    if (x.d.kind !== 'unit') return false;
+    const dup = state.units.some(u => u.name.toLowerCase()===x.d.data.name.toLowerCase() && u.buildingId===x.d.data.buildingId);
+    if (dup) skipped.push(`${x.d.line} — unit already exists`);
+    return !dup;
+  });
+  if (unitRows.length){
+    setProgress(`Adding ${unitRows.length} unit${unitRows.length===1?'':'s'}…`);
+    const results = await siRunPool(unitRows, x => apiPost('addUnit', x.d.data), 6);
+    results.forEach((r,i)=>{ if (r && r.__error) skipped.push(`${unitRows[i].d.line} — save failed`); else counts.unit++; });
+    await loadAll(); // refresh so newly created units have real IDs to match against
+    detected = lines.map((line,i)=> detected[i].kind==='unknown' ? siDetectRow(line) : detected[i]);
   }
 
-  $('btnSmartImport').disabled = false;
+  // Phase 3 — recurring expenses + transactions together, all sent at once.
+  const finalRows = detected.map((d,i)=>({d,i})).filter(x=> x.d.kind==='expense' || x.d.kind==='entry');
+  if (finalRows.length){
+    setProgress(`Adding ${finalRows.length} expense/transaction row${finalRows.length===1?'':'s'}…`);
+    const results = await siRunPool(finalRows, x => apiPost(x.d.kind==='expense' ? 'addConstantExpense' : 'addEntry', x.d.data), 6);
+    results.forEach((r,i)=>{
+      if (r && r.__error) skipped.push(`${finalRows[i].d.line} — save failed`);
+      else counts[finalRows[i].d.kind]++;
+    });
+  }
+
+  detected.forEach(d=>{ if (d.kind === 'unknown') skipped.push(d.reason); });
+
   const totalAdded = counts.building + counts.unit + counts.expense + counts.entry;
   const parts = [];
   if (counts.building) parts.push(`${counts.building} building${counts.building===1?'':'s'}`);
@@ -2192,8 +2212,10 @@ $('btnSmartImport').addEventListener('click', async ()=>{
   if (counts.entry) parts.push(`${counts.entry} transaction${counts.entry===1?'':'s'}`);
   if (totalAdded) logActivity('created', 'Smart import', `${totalAdded} row(s): ${parts.join(', ')}`);
 
+  setProgress('Refreshing…');
   await loadAll();
   renderExpensesView();
+  $('btnSmartImport').disabled = false;
 
   $('siResult').innerHTML =
     `<div class="page-sub" style="margin-bottom:6px;"><b style="color:var(--ink);">${totalAdded}</b> row${totalAdded===1?'':'s'} added${parts.length?' — '+parts.join(', '):''}.</div>` +
