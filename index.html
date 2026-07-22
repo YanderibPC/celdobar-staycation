@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>celdo bar &mdash; Staycation Ledger</title>
+<title>Celdobar &mdash; Staycation Ledger</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,700;0,9..144,900;1,9..144,600&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
@@ -1556,17 +1556,31 @@ function renderImportPreview(rows){
 
 /* ============================== INIT ================================ */
 async function initApp(){
-  db = loadLocal() || defaultDb();
+  const raw = loadLocal();
+  const isFirstRun = raw === null;
+  db = raw || defaultDb();
   if(!db.buildings) db = Object.assign(defaultDb(), db);
-  if(db.buildings.length===0 && db.units.length===0 && db.income.length===0){
-    seed();
+
+  if(isFirstRun){
+    // Brand-new browser/device with no local data at all: try to pull the
+    // real ledger from the connected Sheet first, and only fall back to
+    // sample data if that isn't configured or fails. On every load *after*
+    // this, local storage is treated as the source of truth so that
+    // deleting things (or the Sheet still holding stale rows because a
+    // push hasn't gone through) can never silently bring old/sample data
+    // back. Use the "Pull from Sheet" button in Settings to sync manually.
+    let pulled = false;
+    if(db.settings.useSheets && db.settings.gasUrl){
+      pulled = await pullRemote();
+    }
+    if(!pulled && db.buildings.length===0 && db.units.length===0 && db.income.length===0){
+      seed();
+    }
+    saveLocal();
   }
+
   renderShell();
   renderView();
-  if(db.settings.useSheets && db.settings.gasUrl){
-    const ok = await pullRemote();
-    if(ok){ saveLocal(); renderView(); }
-  }
   // keyboard: esc closes modal
   document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
 }
