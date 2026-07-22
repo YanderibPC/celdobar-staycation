@@ -405,8 +405,963 @@ function logActivity(message, type){
   if(db.activity.length>500) db.activity.length = 500;
 }
 
-/* ---- seed demo data so the app is usable immediately ---- */
+/* ---- imported ledger data, pulled from the "CASH FLOW MONITORING 2026"
+   Google Sheet (docs.google.com/spreadsheets/d/1b6vxNzE7hKhJHWmJe4Lrb1cdVIdaBj68NVinyt-HRwA).
+   That sheet is a wide monthly-summary layout (one column per unit, one row
+   per month) rather than itemized transactions, so each nonzero monthly
+   cell became one Income entry (dated the 5th of that month) or one
+   "Imported" Expense entry (dated the 3rd, type "variable", representing
+   that month's total cost for the unit) below. Buildings/units were
+   inferred from the sheet's "unit" and "Location" header rows. ---- */
+const IMPORTED_LEDGER_DATA = {
+  "buildings": [
+    {
+      "id": "id_6738ac2943cc",
+      "name": "Beacon",
+      "address": "",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_5dc7105a5588",
+      "name": "AIR",
+      "address": "",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_b7bd120240dd",
+      "name": "Parksuites",
+      "address": "",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_314277827997",
+      "name": "ONE UPTOWN",
+      "address": "",
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "units": [
+    {
+      "id": "id_b638350f22e6",
+      "buildingId": "id_6738ac2943cc",
+      "name": "3715",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_b3a21d38c75a",
+      "buildingId": "id_6738ac2943cc",
+      "name": "3220",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_82defba1b934",
+      "buildingId": "id_6738ac2943cc",
+      "name": "3318",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_99c882ed319b",
+      "buildingId": "id_6738ac2943cc",
+      "name": "3319",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_40749b6b28f7",
+      "buildingId": "id_6738ac2943cc",
+      "name": "LP 125",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_b6c39752ecc0",
+      "buildingId": "id_6738ac2943cc",
+      "name": "4418",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_df745b52407b",
+      "buildingId": "id_6738ac2943cc",
+      "name": "LP121",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_0a33d562129f",
+      "buildingId": "id_5dc7105a5588",
+      "name": "2906",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_ad9128896bb9",
+      "buildingId": "id_5dc7105a5588",
+      "name": "3432",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_2f6b94f2a951",
+      "buildingId": "id_5dc7105a5588",
+      "name": "5651",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_34df1df6b893",
+      "buildingId": "id_5dc7105a5588",
+      "name": "2705",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_0f2946602028",
+      "buildingId": "id_b7bd120240dd",
+      "name": "7S",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_136abd2c434b",
+      "buildingId": "id_b7bd120240dd",
+      "name": "27I",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "id_12e097324231",
+      "buildingId": "id_314277827997",
+      "name": "18D1",
+      "visible": true,
+      "createdAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "income": [
+    {
+      "id": "id_1ae0201d50bd",
+      "unitId": "id_b638350f22e6",
+      "date": "2026-01-05",
+      "amount": 16187.69,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_323054df6733",
+      "unitId": "id_b3a21d38c75a",
+      "date": "2026-01-05",
+      "amount": 10719.22,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_a253bd63d044",
+      "unitId": "id_82defba1b934",
+      "date": "2026-01-05",
+      "amount": 60350.74,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_4704171680ca",
+      "unitId": "id_99c882ed319b",
+      "date": "2026-01-05",
+      "amount": 10345.59,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_aab397151c64",
+      "unitId": "id_40749b6b28f7",
+      "date": "2026-01-05",
+      "amount": 2980.38,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_743dadf190e0",
+      "unitId": "id_b6c39752ecc0",
+      "date": "2026-01-05",
+      "amount": 20445.97,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_add88aeb01f4",
+      "unitId": "id_df745b52407b",
+      "date": "2026-01-05",
+      "amount": 19601.15,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_86828dcc1f97",
+      "unitId": "id_0a33d562129f",
+      "date": "2026-01-05",
+      "amount": 20387.4,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_9c3cb5e977d1",
+      "unitId": "id_ad9128896bb9",
+      "date": "2026-01-05",
+      "amount": 11948.15,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_b54674cdabf7",
+      "unitId": "id_2f6b94f2a951",
+      "date": "2026-01-05",
+      "amount": 27734.31,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_556ee15a91bd",
+      "unitId": "id_0f2946602028",
+      "date": "2026-01-05",
+      "amount": 65436.41,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_4aff128ff73e",
+      "unitId": "id_136abd2c434b",
+      "date": "2026-01-05",
+      "amount": 61099.44,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_07924ff356ce",
+      "unitId": "id_12e097324231",
+      "date": "2026-01-05",
+      "amount": 44260.79,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_8b75f15cb636",
+      "unitId": "id_b638350f22e6",
+      "date": "2026-02-05",
+      "amount": 12628.59,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_babdebe5c236",
+      "unitId": "id_b3a21d38c75a",
+      "date": "2026-02-05",
+      "amount": 11450.06,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_285b7fbd03a1",
+      "unitId": "id_82defba1b934",
+      "date": "2026-02-05",
+      "amount": 30643.4,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_7fcbfa1e6f1b",
+      "unitId": "id_99c882ed319b",
+      "date": "2026-02-05",
+      "amount": 11434.84,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_97a84bc7f801",
+      "unitId": "id_40749b6b28f7",
+      "date": "2026-02-05",
+      "amount": 26475.6,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_ee0246d0d209",
+      "unitId": "id_b6c39752ecc0",
+      "date": "2026-02-05",
+      "amount": 29208.0,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_2d0ca28f6810",
+      "unitId": "id_df745b52407b",
+      "date": "2026-02-05",
+      "amount": 15104.95,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_2175c85175f6",
+      "unitId": "id_0a33d562129f",
+      "date": "2026-02-05",
+      "amount": 12076.44,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_a29e6ca3791f",
+      "unitId": "id_ad9128896bb9",
+      "date": "2026-02-05",
+      "amount": 14815.45,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_68366a96af3e",
+      "unitId": "id_0f2946602028",
+      "date": "2026-02-05",
+      "amount": 50865.42,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_60cb015db80b",
+      "unitId": "id_136abd2c434b",
+      "date": "2026-02-05",
+      "amount": 34323.31,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_57fda809558a",
+      "unitId": "id_12e097324231",
+      "date": "2026-02-05",
+      "amount": 54469.25,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-02-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_5d69661e7421",
+      "unitId": "id_b638350f22e6",
+      "date": "2026-03-05",
+      "amount": 21508.35,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-03-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_c8e0f83f7d23",
+      "unitId": "id_b3a21d38c75a",
+      "date": "2026-03-05",
+      "amount": 16186.59,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-03-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_caa63b14b6d9",
+      "unitId": "id_99c882ed319b",
+      "date": "2026-03-05",
+      "amount": 17730.95,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-03-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_a20215a28ee0",
+      "unitId": "id_b6c39752ecc0",
+      "date": "2026-03-05",
+      "amount": 29000.0,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-03-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_3d79bd228f1b",
+      "unitId": "id_df745b52407b",
+      "date": "2026-03-05",
+      "amount": 28558.78,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-03-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_21911d669dcb",
+      "unitId": "id_0a33d562129f",
+      "date": "2026-03-05",
+      "amount": 36600.0,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-03-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_0fd0f8b34866",
+      "unitId": "id_ad9128896bb9",
+      "date": "2026-03-05",
+      "amount": 20818.58,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-03-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_e1b87aba07f5",
+      "unitId": "id_2f6b94f2a951",
+      "date": "2026-03-05",
+      "amount": 9284.9,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-03-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_5bb0b8b29548",
+      "unitId": "id_0f2946602028",
+      "date": "2026-03-05",
+      "amount": 33379.39,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-03-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_ac609cfc2d1c",
+      "unitId": "id_136abd2c434b",
+      "date": "2026-03-05",
+      "amount": 40727.77,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-03-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_019d9ae7bb21",
+      "unitId": "id_12e097324231",
+      "date": "2026-03-05",
+      "amount": 52952.21,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-03-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_35ad22d19427",
+      "unitId": "id_b638350f22e6",
+      "date": "2026-04-05",
+      "amount": 10016.1,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-04-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_4a2aa586c972",
+      "unitId": "id_b3a21d38c75a",
+      "date": "2026-04-05",
+      "amount": 15327.11,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-04-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_4e4661a3fbfe",
+      "unitId": "id_82defba1b934",
+      "date": "2026-04-05",
+      "amount": 20537.18,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-04-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_8b596863b557",
+      "unitId": "id_99c882ed319b",
+      "date": "2026-04-05",
+      "amount": 8231.34,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-04-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_1bc1064b4406",
+      "unitId": "id_b6c39752ecc0",
+      "date": "2026-04-05",
+      "amount": 19652.83,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-04-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_df59f7b29c47",
+      "unitId": "id_df745b52407b",
+      "date": "2026-04-05",
+      "amount": 27500.0,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-04-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_edaf518c3609",
+      "unitId": "id_0a33d562129f",
+      "date": "2026-04-05",
+      "amount": 28000.0,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-04-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_cc030f48d597",
+      "unitId": "id_ad9128896bb9",
+      "date": "2026-04-05",
+      "amount": 1639.01,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-04-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_a457287c4d4e",
+      "unitId": "id_2f6b94f2a951",
+      "date": "2026-04-05",
+      "amount": 10246.82,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-04-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_9dca4c8cfcb2",
+      "unitId": "id_34df1df6b893",
+      "date": "2026-04-05",
+      "amount": 10432.76,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-04-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_38f2b4ac3baf",
+      "unitId": "id_0f2946602028",
+      "date": "2026-04-05",
+      "amount": 5203.1,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-04-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_3779ac186342",
+      "unitId": "id_82defba1b934",
+      "date": "2026-05-05",
+      "amount": 53778.22,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-05-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_6dfc2866a696",
+      "unitId": "id_99c882ed319b",
+      "date": "2026-05-05",
+      "amount": 25587.66,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-05-05T00:00:00.000Z"
+    },
+    {
+      "id": "id_2cdd75590afa",
+      "unitId": "id_0a33d562129f",
+      "date": "2026-05-05",
+      "amount": 28000.0,
+      "note": "Imported: Cash Flow Monitoring 2026",
+      "timestamp": "2026-05-05T00:00:00.000Z"
+    }
+  ],
+  "expenses": [
+    {
+      "id": "id_38360d37b4a0",
+      "unitId": "id_b638350f22e6",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 24866.95,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_d10bffdea6c5",
+      "unitId": "id_b3a21d38c75a",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 23297.15,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_ab4aca0ba04b",
+      "unitId": "id_82defba1b934",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 33531.0,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_888ae3a0afb6",
+      "unitId": "id_99c882ed319b",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 19319.0,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_32cb7e378b9f",
+      "unitId": "id_40749b6b28f7",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 21409.14,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_8265ad92faff",
+      "unitId": "id_b6c39752ecc0",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 27638.32,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_f9371b31ed91",
+      "unitId": "id_df745b52407b",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 29586.63,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_03ffa12ecea1",
+      "unitId": "id_0a33d562129f",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 22821.49,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_597e8bad149f",
+      "unitId": "id_ad9128896bb9",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 22556.16,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_72393712bcae",
+      "unitId": "id_2f6b94f2a951",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 15636.96,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_62ea341051f5",
+      "unitId": "id_0f2946602028",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 54825.95,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_e769f3cccf84",
+      "unitId": "id_136abd2c434b",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 8805.55,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_4a1d850ae4eb",
+      "unitId": "id_12e097324231",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-01-03",
+      "amount": 49225.95,
+      "timestamp": "2026-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_d390cb4e6be7",
+      "unitId": "id_b638350f22e6",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 2499.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_3e50cf3d7bcc",
+      "unitId": "id_b3a21d38c75a",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 23264.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_1157c35deb2c",
+      "unitId": "id_82defba1b934",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 36931.67,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_9f3a98c1bdfc",
+      "unitId": "id_99c882ed319b",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 17980.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_627e070c5241",
+      "unitId": "id_40749b6b28f7",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 1299.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_aceb8146a5ec",
+      "unitId": "id_b6c39752ecc0",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 27135.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_78226a7eb5d7",
+      "unitId": "id_df745b52407b",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 27558.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_982bda2d7155",
+      "unitId": "id_0a33d562129f",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 21450.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_420e4bac6497",
+      "unitId": "id_ad9128896bb9",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 20650.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_1c718640fef6",
+      "unitId": "id_2f6b94f2a951",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 3510.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_d87fda14a315",
+      "unitId": "id_0f2946602028",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 53094.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_1551fefbdc1f",
+      "unitId": "id_136abd2c434b",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 53078.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_299bcda08e6c",
+      "unitId": "id_12e097324231",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-02-03",
+      "amount": 40699.0,
+      "timestamp": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_9b867a8ae3f6",
+      "unitId": "id_b638350f22e6",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-03-03",
+      "amount": 23527.0,
+      "timestamp": "2026-03-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_7d73ba4dbc56",
+      "unitId": "id_b3a21d38c75a",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-03-03",
+      "amount": 17891.0,
+      "timestamp": "2026-03-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_84db13c192a9",
+      "unitId": "id_99c882ed319b",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-03-03",
+      "amount": 20836.67,
+      "timestamp": "2026-03-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_a47b5b450347",
+      "unitId": "id_b6c39752ecc0",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-03-03",
+      "amount": 22166.67,
+      "timestamp": "2026-03-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_1e19888373e4",
+      "unitId": "id_df745b52407b",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-03-03",
+      "amount": 21600.0,
+      "timestamp": "2026-03-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_003c7acfb052",
+      "unitId": "id_0a33d562129f",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-03-03",
+      "amount": 20250.0,
+      "timestamp": "2026-03-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_7471cc47871d",
+      "unitId": "id_ad9128896bb9",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-03-03",
+      "amount": 17879.16,
+      "timestamp": "2026-03-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_b5f6eeecca13",
+      "unitId": "id_2f6b94f2a951",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-03-03",
+      "amount": 6174.0,
+      "timestamp": "2026-03-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_b1d8d001674a",
+      "unitId": "id_0f2946602028",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-03-03",
+      "amount": 49710.39,
+      "timestamp": "2026-03-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_bac89bbc799d",
+      "unitId": "id_136abd2c434b",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-03-03",
+      "amount": 6838.3,
+      "timestamp": "2026-03-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_d9980da87525",
+      "unitId": "id_12e097324231",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-03-03",
+      "amount": 45972.14,
+      "timestamp": "2026-03-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_703b885016e5",
+      "unitId": "id_0a33d562129f",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-04-03",
+      "amount": 20250.0,
+      "timestamp": "2026-04-03T00:00:00.000Z"
+    },
+    {
+      "id": "id_eac617a7322b",
+      "unitId": "id_0a33d562129f",
+      "type": "variable",
+      "category": "Imported",
+      "description": "Imported: Cash Flow Monitoring 2026 (monthly total)",
+      "date": "2026-05-03",
+      "amount": 20250.0,
+      "timestamp": "2026-05-03T00:00:00.000Z"
+    }
+  ],
+  "activity": [
+    {
+      "id": "id_345693cc8385",
+      "timestamp": "2026-07-22T00:00:00.000Z",
+      "message": "Imported 50 income and 39 expense entries from 'CASH FLOW MONITORING 2026' Google Sheet (14 units across 4 buildings).",
+      "type": "create"
+    }
+  ]
+};
+
+
+/* ---- seed the ledger with the imported data (falls back to a couple of
+   sample rows if the import block above is ever emptied out) ---- */
 function seed(){
+  const src = (typeof IMPORTED_LEDGER_DATA !== 'undefined' && IMPORTED_LEDGER_DATA.buildings && IMPORTED_LEDGER_DATA.buildings.length)
+    ? IMPORTED_LEDGER_DATA : null;
+
+  if(src){
+    db.buildings = JSON.parse(JSON.stringify(src.buildings));
+    db.units = JSON.parse(JSON.stringify(src.units));
+    db.income = JSON.parse(JSON.stringify(src.income));
+    db.expenses = JSON.parse(JSON.stringify(src.expenses));
+    db.activity = JSON.parse(JSON.stringify(src.activity||[])).concat(db.activity);
+    saveLocal();
+    return;
+  }
+
+  // fallback demo data (only used if IMPORTED_LEDGER_DATA is unavailable)
   const b1 = {id:uid(), name:'Sunset Ridge Residences', address:'Tagaytay City', createdAt:new Date().toISOString()};
   const b2 = {id:uid(), name:'Palm Court Suites', address:'Boracay, Aklan', createdAt:new Date().toISOString()};
   db.buildings.push(b1,b2);
