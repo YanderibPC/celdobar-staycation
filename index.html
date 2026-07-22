@@ -599,7 +599,7 @@ function confirmModal(message, onConfirm){
       <button class="btn btn-primary" style="background:#a3271b;border-color:#a3271b" id="confirm-yes">Delete</button>
     </div>
   `);
-  document.getElementById('confirm-yes').addEventListener('click', ()=>{ onConfirm(); closeModal(); });
+  document.getElementById('confirm-yes').addEventListener('click', ()=>{ closeModal(); onConfirm(); });
 }
 
 function unitOptions(includeAll){
@@ -652,7 +652,7 @@ function renderDashboard(c){
     </div>
     <div class="two-col">
       <div class="card">
-        <div class="card-head"><h3>Monthly income vs. expenses</h3></div>
+        <div class="card-head"><h3>Income vs. expenses</h3></div>
         <div class="chart-wrap"><canvas id="chart-dash-bar"></canvas></div>
       </div>
       <div class="card">
@@ -700,13 +700,23 @@ function renderDashboard(c){
   });
 
   destroyChart('dash-pie');
-  const expByCat = groupSum(exp, 'category');
+  // Portfolio breakdown: each building's share of gross income within the
+  // selected period. Recomputed from live db.income/db.buildings every
+  // render, so it updates automatically with new/edited/imported/deleted entries.
+  const incomeByBuilding = {};
+  db.buildings.forEach(b=>{
+    const us = unitsOf(b.id).map(u=>u.id);
+    const bGross = sum(inc.filter(i=>us.includes(i.unitId)),'amount');
+    if(bGross>0) incomeByBuilding[b.name] = bGross;
+  });
+  const pbLabels = Object.keys(incomeByBuilding);
   state.charts['dash-pie'] = new Chart(document.getElementById('chart-dash-pie'), {
     type:'pie',
-    data:{ labels:['Net Income', ...Object.keys(expByCat)],
-      datasets:[{ data:[Math.max(t.net,0), ...Object.values(expByCat)],
-        backgroundColor:[STRIPE_COLORS[2], ...paletteFor(Object.keys(expByCat).length)] }] },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom', labels:{boxWidth:12,font:{size:11}}} } }
+    data:{ labels: pbLabels.length?pbLabels:['No income yet'],
+      datasets:[{ data: pbLabels.length?Object.values(incomeByBuilding):[1],
+        backgroundColor: pbLabels.length?paletteFor(pbLabels.length):['#e7ddc9'] }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom', labels:{boxWidth:12,font:{size:11}}},
+      tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${fmtMoney(ctx.parsed)} (${(ctx.parsed/Math.max(t.gross,1)*100).toFixed(1)}%)` } } } }
   });
 }
 
@@ -938,14 +948,14 @@ function openUnitForm(unit, presetBuildingId){
 function openUnitDetail(unitId){
   const u = getUnit(unitId); if(!u) return;
   const b = getBuilding(u.buildingId);
-  const detailState = { year: allYears()[0]||new Date().getFullYear() };
+  const detailState = { year: allYears()[0]||new Date().getFullYear(), selected:{} };
   renderUnitDetailModal(u,b,detailState);
 }
 
 function renderUnitDetailModal(u,b,ds){
   const year = ds.year;
   const inc = db.income.filter(i=>i.unitId===u.id && yearOf(i.date)===parseInt(year,10));
-  const exp = db.expenses.filter(e=>e.unitId===u.id && yearOf(e.date)===parseInt(year,10));
+  const exp = db.expenses.filter(e=>e.unitId===u.id && yearOf(e.date)===parseInt(year,10)).sort((a,b2)=>a.date<b2.date?1:-1);
   const monthRows = MONTHS.map((mLabel,m)=>{
     const mi = sum(inc.filter(i=>monthOf(i.date)===m),'amount');
     const me = sum(exp.filter(e=>monthOf(e.date)===m),'amount');
@@ -953,7 +963,7 @@ function renderUnitDetailModal(u,b,ds){
     return {mLabel,mi,me,net,margin,m};
   });
   const totals = computeTotals(inc,exp);
-  const catTotals = groupSum(exp,'category');
+  ds.selected = ds.selected || {};
 
   openModal(`
     <div class="modal-head">
@@ -982,14 +992,29 @@ function renderUnitDetailModal(u,b,ds){
         </table>
       </div>
       <div class="divider"></div>
-      <h3 style="font-size:15px;margin:0 0 10px;">Itemized expenses — ${year}</h3>
+      <div class="card-head" style="margin-bottom:10px;">
+        <h3 style="font-size:15px;margin:0;">Itemized expenses — ${year}</h3>
+        <div class="row-actions">
+          <button class="btn btn-sm" id="ud-add-exp">${icon('plus')} Add expense</button>
+          <button class="btn btn-sm btn-danger" id="ud-bulk-del-exp" style="display:none;">${icon('trash')} Delete selected</button>
+        </div>
+      </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Description</th><th>Amount</th></tr></thead>
+          <thead><tr>
+            <th style="width:28px;"><input type="checkbox" id="ud-select-all-exp"></th>
+            <th>Date</th><th>Type</th><th>Category</th><th>Description</th><th>Amount</th><th></th>
+          </tr></thead>
           <tbody>
-          ${exp.length? exp.sort((a,b2)=>a.date<b2.date?1:-1).map(e=>`<tr><td>${fmtDate(e.date)}</td><td><span class="tag ${e.type}">${e.type}</span></td>
-            <td>${escapeHtml(e.category)}</td><td>${escapeHtml(e.description||'—')}</td><td class="amt neg">${fmtMoney(e.amount)}</td></tr>`).join('')
-            : `<tr><td colspan="5" class="empty-state">No expenses logged for ${year}.</td></tr>`}
+          ${exp.length? exp.map(e=>`<tr>
+              <td><input type="checkbox" class="ud-exp-check" data-id="${e.id}" ${ds.selected[e.id]?'checked':''}></td>
+              <td>${fmtDate(e.date)}</td><td><span class="tag ${e.type}">${e.type}</span></td>
+              <td>${escapeHtml(e.category)}</td><td>${escapeHtml(e.description||'—')}</td><td class="amt neg">${fmtMoney(e.amount)}</td>
+              <td class="row-actions">
+                <button class="btn btn-sm btn-icon" data-ud-edit="${e.id}" title="Edit">${icon('edit')}</button>
+                <button class="btn btn-sm btn-icon btn-danger" data-ud-del="${e.id}" title="Delete">${icon('trash')}</button>
+              </td></tr>`).join('')
+            : `<tr><td colspan="7" class="empty-state">No expenses logged for ${year}.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -999,7 +1024,50 @@ function renderUnitDetailModal(u,b,ds){
     </div>
   `, {wide:true});
 
-  document.getElementById('ud-year').addEventListener('change', e=>{ ds.year=e.target.value; renderUnitDetailModal(u,b,ds); });
+  document.getElementById('ud-year').addEventListener('change', e=>{ ds.year=e.target.value; ds.selected={}; renderUnitDetailModal(u,b,ds); });
+
+  const selectAll = document.getElementById('ud-select-all-exp');
+  const bulkBtn = document.getElementById('ud-bulk-del-exp');
+  const updateBulkVisibility = ()=>{
+    const anyChecked = Object.values(ds.selected).some(Boolean);
+    bulkBtn.style.display = anyChecked ? 'inline-flex' : 'none';
+  };
+  updateBulkVisibility();
+  selectAll.addEventListener('change', e=>{
+    exp.forEach(e2=>{ ds.selected[e2.id] = e.target.checked; });
+    renderUnitDetailModal(u,b,ds);
+  });
+  document.querySelectorAll('.ud-exp-check').forEach(cb=>{
+    cb.addEventListener('change', e=>{ ds.selected[cb.dataset.id] = e.target.checked; updateBulkVisibility(); });
+  });
+  bulkBtn.addEventListener('click', ()=>{
+    const ids = Object.keys(ds.selected).filter(id=>ds.selected[id]);
+    if(!ids.length) return;
+    confirmModal(`Delete ${ids.length} selected expense entr${ids.length===1?'y':'ies'}?`, ()=>{
+      db.expenses = db.expenses.filter(x=>!ids.includes(x.id));
+      logActivity(`Deleted ${ids.length} expense entr${ids.length===1?'y':'ies'} for unit "${u.name}".`,'delete');
+      ds.selected = {};
+      persist(); renderUnitDetailModal(u,b,ds); toast('Expenses deleted');
+    });
+  });
+  document.getElementById('ud-add-exp').addEventListener('click', ()=>{
+    openExpenseForm(null, 'constant', ()=>renderUnitDetailModal(u,b,ds), u.id);
+  });
+  c_ud_wire_rows(u,b,ds);
+}
+function c_ud_wire_rows(u,b,ds){
+  document.querySelectorAll('[data-ud-edit]').forEach(btn=>btn.addEventListener('click', ()=>{
+    const e = db.expenses.find(x=>x.id===btn.dataset.udEdit);
+    openExpenseForm(e, null, ()=>renderUnitDetailModal(u,b,ds));
+  }));
+  document.querySelectorAll('[data-ud-del]').forEach(btn=>btn.addEventListener('click', ()=>{
+    const e = db.expenses.find(x=>x.id===btn.dataset.udDel);
+    confirmModal(`Delete this expense entry (${fmtMoney(e.amount)})?`, ()=>{
+      db.expenses = db.expenses.filter(x=>x.id!==e.id);
+      logActivity(`Deleted expense "${e.category}" (${fmtMoney(e.amount)}).`,'delete');
+      persist(); renderUnitDetailModal(u,b,ds); toast('Expense deleted');
+    });
+  }));
 }
 
 /* ============================== EXPENSES ================================ */
@@ -1008,9 +1076,18 @@ const EXPENSE_CATEGORIES = {
   variable: ['Cleaning','Repairs','Restocking/Supplies','Guest Amenities','Platform/Booking Fees','Marketing','Other Variable'],
 };
 
+/* Look for an existing entry that matches on unit + date + amount, used to
+   warn about likely duplicates when someone manually logs a new entry
+   (import-time duplicate detection is handled separately in annotateDuplicates). */
+function findLikelyDuplicate(list, unitId, date, amount, excludeId){
+  return list.find(x=> x.id!==excludeId && x.unitId===unitId && x.date===date && Math.abs((parseFloat(x.amount)||0)-amount)<0.01);
+}
+
 function renderExpenses(c){
   const s = state.expenses;
+  s.selected = s.selected || {};
   setTopbar('Expenses', 'Track constant and variable costs, itemized per unit', `
+    <button class="btn btn-danger" id="bulk-del-exp-btn" style="display:none;">${icon('trash')} Delete selected</button>
     <button class="btn btn-primary" id="add-expense-btn">${icon('plus')} Add expense</button>
   `);
 
@@ -1039,17 +1116,21 @@ function renderExpenses(c){
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Date</th><th>Unit</th><th>Category</th><th>Description</th><th>Amount</th><th></th></tr></thead>
+          <thead><tr>
+            <th style="width:28px;"><input type="checkbox" id="select-all-exp"></th>
+            <th>Date</th><th>Unit</th><th>Category</th><th>Description</th><th>Amount</th><th></th>
+          </tr></thead>
           <tbody>
           ${list.length? list.map(e=>{
             const u = getUnit(e.unitId);
-            return `<tr><td>${fmtDate(e.date)}</td><td>${escapeHtml(u?u.name:'—')}</td><td>${escapeHtml(e.category)}</td>
+            return `<tr><td><input type="checkbox" class="exp-check" data-id="${e.id}" ${s.selected[e.id]?'checked':''}></td>
+              <td>${fmtDate(e.date)}</td><td>${escapeHtml(u?u.name:'—')}</td><td>${escapeHtml(e.category)}</td>
               <td>${escapeHtml(e.description||'—')}</td><td class="amt neg">${fmtMoney(e.amount)}</td>
               <td class="row-actions">
                 <button class="btn btn-sm btn-icon" data-edit-exp="${e.id}">${icon('edit')}</button>
                 <button class="btn btn-sm btn-icon btn-danger" data-del-exp="${e.id}">${icon('trash')}</button>
               </td></tr>`;
-          }).join('') : `<tr><td colspan="6" class="empty-state">No ${s.kind} expenses match these filters.</td></tr>`}
+          }).join('') : `<tr><td colspan="7" class="empty-state">No ${s.kind} expenses match these filters.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1061,8 +1142,8 @@ function renderExpenses(c){
   document.getElementById('exp-unit').addEventListener('change', e=>{ s.unit=e.target.value; renderExpenses(c); });
   document.getElementById('exp-year').addEventListener('change', e=>{ s.year=e.target.value; renderExpenses(c); });
   document.getElementById('exp-month').addEventListener('change', e=>{ s.month=e.target.value; renderExpenses(c); });
-  document.getElementById('add-expense-btn').addEventListener('click', ()=>openExpenseForm(null, s.kind));
-  c.querySelectorAll('[data-edit-exp]').forEach(b=>b.addEventListener('click',()=>openExpenseForm(db.expenses.find(x=>x.id===b.dataset.editExp))));
+  document.getElementById('add-expense-btn').addEventListener('click', ()=>openExpenseForm(null, s.kind, ()=>renderExpenses(c)));
+  c.querySelectorAll('[data-edit-exp]').forEach(b=>b.addEventListener('click',()=>openExpenseForm(db.expenses.find(x=>x.id===b.dataset.editExp), null, ()=>renderExpenses(c))));
   c.querySelectorAll('[data-del-exp]').forEach(b=>b.addEventListener('click',()=>{
     const e = db.expenses.find(x=>x.id===b.dataset.delExp);
     confirmModal(`Delete this expense entry (${fmtMoney(e.amount)})?`, ()=>{
@@ -1071,9 +1152,29 @@ function renderExpenses(c){
       persist(); renderExpenses(c); toast('Expense deleted');
     });
   }));
+
+  const selectAllExp = document.getElementById('select-all-exp');
+  const bulkDelExp = document.getElementById('bulk-del-exp-btn');
+  const updateBulkExp = ()=>{ bulkDelExp.style.display = Object.values(s.selected).some(Boolean) ? 'inline-flex' : 'none'; };
+  updateBulkExp();
+  selectAllExp.addEventListener('change', e=>{
+    list.forEach(item=>{ s.selected[item.id] = e.target.checked; });
+    renderExpenses(c);
+  });
+  c.querySelectorAll('.exp-check').forEach(cb=>cb.addEventListener('change', e=>{ s.selected[cb.dataset.id]=e.target.checked; updateBulkExp(); }));
+  bulkDelExp.addEventListener('click', ()=>{
+    const ids = Object.keys(s.selected).filter(id=>s.selected[id]);
+    if(!ids.length) return;
+    confirmModal(`Delete ${ids.length} selected expense entr${ids.length===1?'y':'ies'}?`, ()=>{
+      db.expenses = db.expenses.filter(x=>!ids.includes(x.id));
+      logActivity(`Deleted ${ids.length} expense entr${ids.length===1?'y':'ies'} in bulk.`,'delete');
+      s.selected = {};
+      persist(); renderExpenses(c); toast('Expenses deleted');
+    });
+  });
 }
 
-function openExpenseForm(expense, presetKind){
+function openExpenseForm(expense, presetKind, onDone, presetUnitId){
   if(db.units.length===0){ toast('Add a unit first before logging expenses.','error'); return; }
   const kind = expense? expense.type : (presetKind||'constant');
   openFormModal({
@@ -1086,20 +1187,28 @@ function openExpenseForm(expense, presetKind){
       {name:'amount', label:'Amount (₱)', type:'number', step:'0.01', required:true, half:true},
       {name:'description', label:'Description', type:'text', half:true},
     ],
-    values: expense || {unitId:db.units[0].id, type:kind, date:todayISO(), category:kind==='constant'?EXPENSE_CATEGORIES.constant[0]:EXPENSE_CATEGORIES.variable[0]},
+    values: expense || {unitId:presetUnitId||db.units[0].id, type:kind, date:todayISO(), category:kind==='constant'?EXPENSE_CATEGORIES.constant[0]:EXPENSE_CATEGORIES.variable[0]},
     onSubmit(data){
       const amount = parseFloat(data.amount);
       if(!amount || amount<=0){ toast('Enter a valid amount','error'); return; }
-      if(expense){
-        Object.assign(expense, {unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description});
-        logActivity(`Updated expense "${data.category}" (${fmtMoney(amount)}).`,'update');
-        toast('Expense updated');
+      const doSave = ()=>{
+        if(expense){
+          Object.assign(expense, {unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description});
+          logActivity(`Updated expense "${data.category}" (${fmtMoney(amount)}).`,'update');
+          toast('Expense updated');
+        } else {
+          db.expenses.push({id:uid(), unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description, timestamp:new Date().toISOString()});
+          logActivity(`Added ${data.type} expense "${data.category}" (${fmtMoney(amount)}).`,'create');
+          toast('Expense added');
+        }
+        persist(); closeModal(); if(onDone) onDone(); else renderView();
+      };
+      const dup = findLikelyDuplicate(db.expenses, data.unitId, data.date, amount, expense?expense.id:null);
+      if(dup){
+        confirmModal(`This looks like a duplicate of an existing ${fmtMoney(dup.amount)} entry on ${fmtDate(dup.date)} for this unit. Save anyway?`, doSave);
       } else {
-        db.expenses.push({id:uid(), unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description, timestamp:new Date().toISOString()});
-        logActivity(`Added ${data.type} expense "${data.category}" (${fmtMoney(amount)}).`,'create');
-        toast('Expense added');
+        doSave();
       }
-      persist(); closeModal(); renderView();
     }
   });
 }
@@ -1107,7 +1216,9 @@ function openExpenseForm(expense, presetKind){
 /* ============================== INCOME ================================ */
 function renderIncome(c){
   const s = state.income;
+  s.selected = s.selected || {};
   setTopbar('Income', 'Log gross booking income per unit, timestamped', `
+    <button class="btn btn-danger" id="bulk-del-inc-btn" style="display:none;">${icon('trash')} Delete selected</button>
     <button class="btn btn-primary" id="add-income-btn">${icon('plus')} Add income</button>
   `);
 
@@ -1131,17 +1242,21 @@ function renderIncome(c){
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Logged</th><th>Date</th><th>Unit</th><th>Note</th><th>Amount</th><th></th></tr></thead>
+          <thead><tr>
+            <th style="width:28px;"><input type="checkbox" id="select-all-inc"></th>
+            <th>Logged</th><th>Date</th><th>Unit</th><th>Note</th><th>Amount</th><th></th>
+          </tr></thead>
           <tbody>
           ${list.length? list.map(i=>{
             const u = getUnit(i.unitId);
-            return `<tr><td class="mono" style="font-size:11.5px;color:var(--ink-soft);">${fmtTimestamp(i.timestamp||i.date)}</td><td>${fmtDate(i.date)}</td>
+            return `<tr><td><input type="checkbox" class="inc-check" data-id="${i.id}" ${s.selected[i.id]?'checked':''}></td>
+              <td class="mono" style="font-size:11.5px;color:var(--ink-soft);">${fmtTimestamp(i.timestamp||i.date)}</td><td>${fmtDate(i.date)}</td>
               <td>${escapeHtml(u?u.name:'—')}</td><td>${escapeHtml(i.note||'—')}</td><td class="amt pos">${fmtMoney(i.amount)}</td>
               <td class="row-actions">
                 <button class="btn btn-sm btn-icon" data-edit-inc="${i.id}">${icon('edit')}</button>
                 <button class="btn btn-sm btn-icon btn-danger" data-del-inc="${i.id}">${icon('trash')}</button>
               </td></tr>`;
-          }).join('') : `<tr><td colspan="6" class="empty-state">No income logged for these filters.</td></tr>`}
+          }).join('') : `<tr><td colspan="7" class="empty-state">No income logged for these filters.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1152,8 +1267,8 @@ function renderIncome(c){
   document.getElementById('inc-unit').addEventListener('change', e=>{ s.unit=e.target.value; renderIncome(c); });
   document.getElementById('inc-year').addEventListener('change', e=>{ s.year=e.target.value; renderIncome(c); });
   document.getElementById('inc-month').addEventListener('change', e=>{ s.month=e.target.value; renderIncome(c); });
-  document.getElementById('add-income-btn').addEventListener('click', ()=>openIncomeForm(null));
-  c.querySelectorAll('[data-edit-inc]').forEach(b=>b.addEventListener('click',()=>openIncomeForm(db.income.find(x=>x.id===b.dataset.editInc))));
+  document.getElementById('add-income-btn').addEventListener('click', ()=>openIncomeForm(null, ()=>renderIncome(c)));
+  c.querySelectorAll('[data-edit-inc]').forEach(b=>b.addEventListener('click',()=>openIncomeForm(db.income.find(x=>x.id===b.dataset.editInc), ()=>renderIncome(c))));
   c.querySelectorAll('[data-del-inc]').forEach(b=>b.addEventListener('click',()=>{
     const i = db.income.find(x=>x.id===b.dataset.delInc);
     confirmModal(`Delete this income entry (${fmtMoney(i.amount)})?`, ()=>{
@@ -1162,9 +1277,29 @@ function renderIncome(c){
       persist(); renderIncome(c); toast('Income entry deleted');
     });
   }));
+
+  const selectAllInc = document.getElementById('select-all-inc');
+  const bulkDelInc = document.getElementById('bulk-del-inc-btn');
+  const updateBulkInc = ()=>{ bulkDelInc.style.display = Object.values(s.selected).some(Boolean) ? 'inline-flex' : 'none'; };
+  updateBulkInc();
+  selectAllInc.addEventListener('change', e=>{
+    list.forEach(item=>{ s.selected[item.id] = e.target.checked; });
+    renderIncome(c);
+  });
+  c.querySelectorAll('.inc-check').forEach(cb=>cb.addEventListener('change', e=>{ s.selected[cb.dataset.id]=e.target.checked; updateBulkInc(); }));
+  bulkDelInc.addEventListener('click', ()=>{
+    const ids = Object.keys(s.selected).filter(id=>s.selected[id]);
+    if(!ids.length) return;
+    confirmModal(`Delete ${ids.length} selected income entr${ids.length===1?'y':'ies'}?`, ()=>{
+      db.income = db.income.filter(x=>!ids.includes(x.id));
+      logActivity(`Deleted ${ids.length} income entr${ids.length===1?'y':'ies'} in bulk.`,'delete');
+      s.selected = {};
+      persist(); renderIncome(c); toast('Income entries deleted');
+    });
+  });
 }
 
-function openIncomeForm(entry){
+function openIncomeForm(entry, onDone){
   if(db.units.length===0){ toast('Add a unit first before logging income.','error'); return; }
   openFormModal({
     title: entry? 'Edit income entry' : 'Add income',
@@ -1178,16 +1313,24 @@ function openIncomeForm(entry){
     onSubmit(data){
       const amount = parseFloat(data.amount);
       if(!amount || amount<=0){ toast('Enter a valid amount','error'); return; }
-      if(entry){
-        Object.assign(entry, {unitId:data.unitId, date:data.date, amount, note:data.note});
-        logActivity(`Updated income entry (${fmtMoney(amount)}).`,'update');
-        toast('Income updated');
+      const doSave = ()=>{
+        if(entry){
+          Object.assign(entry, {unitId:data.unitId, date:data.date, amount, note:data.note});
+          logActivity(`Updated income entry (${fmtMoney(amount)}).`,'update');
+          toast('Income updated');
+        } else {
+          db.income.push({id:uid(), unitId:data.unitId, date:data.date, amount, note:data.note, timestamp:new Date().toISOString()});
+          logActivity(`Logged income of ${fmtMoney(amount)}.`,'create');
+          toast('Income logged');
+        }
+        persist(); closeModal(); if(onDone) onDone(); else renderView();
+      };
+      const dup = findLikelyDuplicate(db.income, data.unitId, data.date, amount, entry?entry.id:null);
+      if(dup){
+        confirmModal(`This looks like a duplicate of an existing ${fmtMoney(dup.amount)} entry on ${fmtDate(dup.date)} for this unit. Save anyway?`, doSave);
       } else {
-        db.income.push({id:uid(), unitId:data.unitId, date:data.date, amount, note:data.note, timestamp:new Date().toISOString()});
-        logActivity(`Logged income of ${fmtMoney(amount)}.`,'create');
-        toast('Income logged');
+        doSave();
       }
-      persist(); closeModal(); renderView();
     }
   });
 }
@@ -1461,21 +1604,7 @@ function openSmartImport(){
         <label>Paste your data below</label>
         <textarea id="import-text" placeholder="Paste rows copied from Excel/Google Sheets/Notes...&#10;e.g.&#10;Unit 101, 2026-05-05, 28000, income, Airbnb payout&#10;Unit 101, 2026-05-14, 1800, cleaning, Turnover crew"></textarea>
       </div>
-      <div class="field-row" style="margin-top:12px;">
-        <div class="field">
-          <label>Default target (used if a row's type is ambiguous)</label>
-          <select id="import-target">
-            <option value="auto">Auto-detect per row</option>
-            <option value="income">Income</option>
-            <option value="expense-constant">Expense — Constant</option>
-            <option value="expense-variable">Expense — Variable</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>Default unit (used if a row's unit can't be matched, and no new unit can be created)</label>
-          <select id="import-unit">${unitOptions(false).map(o=>`<option value="${o.value}">${o.label}</option>`).join('')}</select>
-        </div>
-      </div>
+      <p class="hint" style="margin-top:12px;">Each row is matched to a unit automatically (by name, building, or sheet/tab name). Rows with no confidently detected unit are marked <strong>Select unit</strong> below and are excluded from the import until you choose one — nothing is ever silently dropped into an unrelated unit.</p>
       <button class="btn btn-primary" id="import-parse-btn" type="button">${icon('upload')} Parse pasted data</button>
       <p class="hint" id="import-file-hint" style="display:none;margin-top:10px;">Analyzing every sheet in each file and matching each row to an existing unit — rows for units that don't exist yet will be added as new entries.</p>
       <div id="import-preview-wrap" style="margin-top:18px;"></div>
@@ -1625,6 +1754,42 @@ function parseMoneyString(s){
   return neg ? -n : n;
 }
 
+/* Parse a date-looking string using a series of increasingly permissive
+   strategies, returning YYYY-MM-DD or null if nothing usable was found.
+   Order: ISO (YYYY-M-D) -> US slash (M/D/YYYY) -> spreadsheet serial number
+   -> a generic Date.parse() fallback that also understands month names
+   ("May 5, 2026", "5 May 2026", "2026-05-05T10:00:00Z", etc). This keeps the
+   ledger faithful to whatever date was actually written in the source file
+   instead of silently substituting today's date whenever the format is
+   slightly different than expected. */
+function parseFlexibleDate(raw){
+  if(raw==null) return null;
+  const date = String(raw).trim();
+  if(!date) return null;
+
+  const iso = date.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(iso){ const [,y,m,d]=iso; return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
+
+  const us = date.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if(us){ let [,mm,dd,yy]=us; if(yy.length===2) yy='20'+yy; return `${yy}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`; }
+
+  const serial = parseFloat(date);
+  if(!isNaN(serial) && /^-?\d+(\.\d+)?$/.test(date) && serial>20000 && serial<80000){
+    const d = new Date(Math.round((serial-25569)*86400*1000));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+  }
+
+  // Generic fallback: handles month-name formats ("May 5, 2026", "5 May 2026",
+  // "2026/05/05", full ISO timestamps, etc.
+  if(/[a-zA-Z]/.test(date) || /\d{4}/.test(date)){
+    const parsed = new Date(date);
+    if(!isNaN(parsed.getTime())){
+      return `${parsed.getFullYear()}-${String(parsed.getMonth()+1).padStart(2,'0')}-${String(parsed.getDate()).padStart(2,'0')}`;
+    }
+  }
+  return null;
+}
+
 function parseSpreadsheetFile(file, callback){
   const ext = (file.name.split('.').pop()||'').toLowerCase();
   const baseName = file.name.replace(/\.[^.]+$/,'');
@@ -1691,7 +1856,11 @@ function smartParse(raw){
    instead of silently dropping them or dumping them onto an unrelated unit.
    `hint.nameHint`, when given (a sheet tab name or a file's own name), is
    used as a last-resort unit/building signal for rows that don't otherwise
-   name one — e.g. a workbook tab called "Villa A" routes its rows there. */
+   name one — e.g. a workbook tab called "Villa A" routes its rows there.
+   Rows where absolutely no unit signal exists anywhere (no matched unit, no
+   usable unit text, no usable hint) are flagged noUnitDetected so the
+   preview forces an explicit manual choice instead of ever silently
+   defaulting to some arbitrary unit. */
 function mapRawRows(rows, hint){
   hint = hint || {};
   const genericNameRe = /^(sheet\d*|summary|totals?|overview|dashboard|data|import|export|report)$/i;
@@ -1751,10 +1920,11 @@ function mapRawRows(rows, hint){
       }
     }
     // fall back to the sheet tab / file name as a unit signal (e.g. a "Villa A" tab)
+    let unitTextFromHintOnly = false;
     if(!unitText && hintIsUsable){
       const m = findUnitMatch(hint.nameHint);
       if(m){ unitText = m.name; matchedExistingUnit = true; }
-      else unitText = hint.nameHint.trim();
+      else { unitText = hint.nameHint.trim(); unitTextFromHintOnly = true; }
     }
     if(!buildingText && hintIsUsable){
       const bm = findBuildingMatch(hint.nameHint);
@@ -1765,23 +1935,16 @@ function mapRawRows(rows, hint){
       category = nonDateAmount.find(c=>isNaN(parseFloat(c))) || 'Imported';
     }
 
-    // normalize date
-    let normDate = null;
-    if(date){
-      const iso = date.match(/\d{4}-\d{1,2}-\d{1,2}/);
-      if(iso){ const [y,m,d]=iso[0].split('-'); normDate = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
-      else {
-        const us = date.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-        if(us){ let [_,mm,dd,yy]=us; if(yy.length===2) yy='20'+yy; normDate = `${yy}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`; }
-        else {
-          // spreadsheet serial date number (e.g. from XLSX cells formatted as numbers)
-          const serial = parseFloat(date);
-          if(!isNaN(serial) && serial>20000 && serial<80000){
-            const d = new Date(Math.round((serial-25569)*86400*1000));
-            normDate = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
-          }
-        }
-      }
+    // A row has zero real unit signal if nothing at all was found — not even
+    // a generic hint like a filename. Force this to be resolved manually.
+    const noUnitDetected = !unitText || !unitText.trim();
+
+    // normalize date — always respect the date actually present in the
+    // source data; only fall back to today when literally nothing parseable
+    // was found in any cell.
+    let normDate = date ? parseFlexibleDate(date) : null;
+    if(!normDate){
+      for(const cell of cells){ const p = parseFlexibleDate(cell); if(p){ normDate = p; break; } }
     }
     if(!normDate) normDate = todayISO();
 
@@ -1806,10 +1969,11 @@ function mapRawRows(rows, hint){
       const found = findUnitMatch(unitText);
       if(found){ unitId = found.id; matchedExistingUnit = true; }
     }
-    // no existing unit matched this row -> it'll be added as a brand new unit/entry on confirm
-    const isNewUnit = !!unitText && !matchedExistingUnit;
+    // no existing unit matched this row -> it'll be added as a brand new unit/entry on confirm,
+    // unless the only signal we had was a generic hint with no real match (noUnitDetected below wins).
+    const isNewUnit = !!unitText && !matchedExistingUnit && !noUnitDetected;
 
-    return { date:normDate, amount:isNaN(normAmount)?0:normAmount, unitText:unitText||'', buildingText:buildingText||'', unitId, isNewUnit, category:category||note||'Imported', note:note||category||'Imported', kind, raw:cells.join(' | ') };
+    return { date:normDate, amount:isNaN(normAmount)?0:normAmount, unitText:unitText||'', buildingText:buildingText||'', unitId, isNewUnit, noUnitDetected, category:category||note||'Imported', note:note||category||'Imported', kind, raw:cells.join(' | ') };
   }).filter(r=>r.amount>0);
 
   return parsedRows;
@@ -1820,7 +1984,9 @@ function mapRawRows(rows, hint){
    seen earlier in this same import batch. Flagged rows default to excluded
    (unchecked) so a re-import of the same file doesn't silently double an
    entry, but the person can still tick "Import" to include one on purpose —
-   e.g. two genuinely separate ₱1,500 cleaning fees on the same day. */
+   e.g. two genuinely separate ₱1,500 cleaning fees on the same day. Rows
+   with no unit detected at all also default to excluded until a unit is
+   manually chosen, so nothing is ever imported against the wrong unit. */
 function annotateDuplicates(rows){
   const seenInBatch = new Map();
   rows.forEach(r=>{
@@ -1836,7 +2002,7 @@ function annotateDuplicates(rows){
       else seenInBatch.set(key, true);
     }
     r.dupWarning = reason;
-    if(r.__include===undefined) r.__include = !reason;
+    if(r.__include===undefined) r.__include = !reason && !r.noUnitDetected;
   });
 }
 
@@ -1848,14 +2014,20 @@ function renderImportPreview(rows){
     annotateDuplicates(rows);
     const newCount = rows.filter(r=>r.isNewUnit).length;
     const dupCount = rows.filter(r=>r.dupWarning).length;
+    const noUnitCount = rows.filter(r=>r.noUnitDetected).length;
+    const allChecked = rows.length>0 && rows.every(r=>r.__include);
     wrap.innerHTML = `
       <p class="hint">Detected <strong>${rows.length}</strong> row(s)${newCount?`, including <strong>${newCount}</strong> for a unit not yet in the ledger — these will be added as new entries`:''}. Review the target and unit for each, then confirm.<span class="badge-count">${rows.length}</span></p>
       ${dupCount?`<p class="hint" style="color:#8a5f0e;font-weight:700;">⚠ ${dupCount} row(s) look like duplicates and are unchecked below — review the "Import" column and tick any you actually want included.</p>`:''}
+      ${noUnitCount?`<p class="hint" style="color:#a3271b;font-weight:700;">⚠ ${noUnitCount} row(s) have no unit detected — choose a unit for each in the "Unit" column before they can be included.</p>`:''}
       <div class="table-wrap"><table class="import-preview-table">
-        <thead><tr><th>Import</th><th>Date</th><th>Amount</th><th>Target</th><th>Unit</th><th>Category / Note</th></tr></thead>
+        <thead><tr>
+          <th style="text-align:center;"><input type="checkbox" id="import-select-all" ${allChecked?'checked':''}></th>
+          <th>Date</th><th>Amount</th><th>Target</th><th>Unit</th><th>Category / Note</th>
+        </tr></thead>
         <tbody>
         ${rows.map((r,i)=>`<tr class="${r.dupWarning?'import-row-dup':''}">
-          <td style="text-align:center;"><input type="checkbox" data-i="${i}" data-f="include" ${r.__include?'checked':''}></td>
+          <td style="text-align:center;"><input type="checkbox" class="import-row-check" data-i="${i}" data-f="include" ${r.__include?'checked':''} ${r.noUnitDetected?'disabled title="Select a unit first"':''}></td>
           <td><input type="date" value="${r.date}" data-i="${i}" data-f="date" style="width:130px"></td>
           <td><input type="number" step="0.01" value="${r.amount}" data-i="${i}" data-f="amount" style="width:100px"></td>
           <td><select data-i="${i}" data-f="kind" style="width:150px">
@@ -1864,12 +2036,14 @@ function renderImportPreview(rows){
             <option value="expense-variable" ${r.kind==='expense-variable'?'selected':''}>Expense — Variable</option>
           </select></td>
           <td><select data-i="${i}" data-f="unitChoice" style="width:190px">
+            ${r.noUnitDetected ? `<option value="" selected>— Select unit —</option>` : ''}
             ${r.isNewUnit ? `<option value="NEW" selected>+ New unit: ${escapeHtml(r.unitText)}</option>` : ''}
-            ${db.units.map(u=>`<option value="${u.id}" ${!r.isNewUnit && u.id===r.unitId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
-            ${!r.isNewUnit && r.unitText ? `<option value="NEW:${escapeHtml(r.unitText)}">+ New unit: ${escapeHtml(r.unitText)}</option>` : ''}
+            ${db.units.map(u=>`<option value="${u.id}" ${!r.isNewUnit && !r.noUnitDetected && u.id===r.unitId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+            ${!r.isNewUnit && !r.noUnitDetected && r.unitText ? `<option value="NEW:${escapeHtml(r.unitText)}">+ New unit: ${escapeHtml(r.unitText)}</option>` : ''}
           </select>
           <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
             ${r.isNewUnit?`<span class="tag import-new-tag">new</span>`:''}
+            ${r.noUnitDetected?`<span class="tag import-dup-tag" style="background:rgba(163,39,27,.14);color:#a3271b;">no unit detected</span>`:''}
             ${r.dupWarning?`<span class="tag import-dup-tag" title="${escapeHtml(r.dupWarning)}">⚠ possible duplicate</span>`:''}
           </div></td>
           <td><input type="text" value="${escapeHtml(r.category)}" data-i="${i}" data-f="category" style="width:170px"></td>
@@ -1877,6 +2051,10 @@ function renderImportPreview(rows){
         </tbody>
       </table></div>
     `;
+    document.getElementById('import-select-all').addEventListener('change', e=>{
+      rows.forEach(r=>{ if(!r.noUnitDetected) r.__include = e.target.checked; });
+      draw();
+    });
     wrap.querySelectorAll('input,select').forEach(el=>{
       const i = +el.dataset.i, f = el.dataset.f;
       if(f==='include'){
@@ -1886,8 +2064,9 @@ function renderImportPreview(rows){
       if(f==='unitChoice'){
         el.addEventListener('change', e=>{
           const v = e.target.value;
-          if(v==='NEW' || v.startsWith('NEW:')){ rows[i].isNewUnit = true; rows[i].unitId = null; if(v.startsWith('NEW:')) rows[i].unitText = v.slice(4); }
-          else { rows[i].isNewUnit = false; rows[i].unitId = v; }
+          if(v===''){ rows[i].isNewUnit=false; rows[i].unitId=null; rows[i].noUnitDetected=true; }
+          else if(v==='NEW' || v.startsWith('NEW:')){ rows[i].isNewUnit = true; rows[i].unitId = null; rows[i].noUnitDetected=false; if(v.startsWith('NEW:')) rows[i].unitText = v.slice(4); }
+          else { rows[i].isNewUnit = false; rows[i].unitId = v; rows[i].noUnitDetected=false; }
           rows[i].__include = undefined; // re-evaluate default now that the target changed
           draw();
         });
@@ -1908,29 +2087,31 @@ function renderImportPreview(rows){
   confirmBtn.style.display='inline-flex';
   confirmBtn.onclick = ()=>{
     if(!db.units.length && !rows.some(r=>r.isNewUnit)){ toast('Add at least one unit before importing','error'); return; }
-    const toImport = rows.filter(r=>r.__include!==false);
-    const skipped = rows.length - toImport.length;
-    if(!toImport.length){ toast('Nothing selected to import — tick "Import" on at least one row','error'); return; }
-    let nInc=0, nExp=0, nNewUnits=0;
+    const toImport = rows.filter(r=>r.__include===true && !r.noUnitDetected);
+    const skippedNoUnit = rows.filter(r=>r.noUnitDetected).length;
+    const skipped = rows.length - toImport.length - skippedNoUnit;
+    if(!toImport.length){ toast('Nothing selected to import — tick "Import" on at least one row with a unit chosen','error'); return; }
+    let nInc=0, nExp=0, nNewUnits=0, nSkippedNoUnit=0;
     const createdUnitsByName = {}; // cache so repeated rows for the same new unit share one unit record
-    let fallbackBuildingId = db.buildings[0] && db.buildings[0].id;
     toImport.forEach(r=>{
       let unitId = r.unitId;
       if(r.isNewUnit){
-        const key = (r.unitText||'Imported unit').toLowerCase();
+        const key = (r.unitText||'').toLowerCase();
         if(createdUnitsByName[key]){
           unitId = createdUnitsByName[key];
         } else {
-          // ensure there's a building to attach the new unit to
-          if(!fallbackBuildingId){
+          // ensure there's a building to attach the new unit to — only ever
+          // synthesize one if truly none exists, and prefer a matched building.
+          let buildingId = null;
+          if(r.buildingText){
+            const foundB = db.buildings.find(bd=>bd.name.toLowerCase()===r.buildingText.toLowerCase());
+            if(foundB) buildingId = foundB.id;
+          }
+          if(!buildingId) buildingId = db.buildings[0] && db.buildings[0].id;
+          if(!buildingId){
             const nb = {id:uid(), name: r.buildingText || 'Imported', address:'', createdAt:new Date().toISOString()};
             db.buildings.push(nb);
-            fallbackBuildingId = nb.id;
-          }
-          let buildingId = fallbackBuildingId;
-          if(r.buildingText){
-            const foundB = db.buildings.find(b=>b.name.toLowerCase()===r.buildingText.toLowerCase());
-            if(foundB) buildingId = foundB.id;
+            buildingId = nb.id;
           }
           const nu = {id:uid(), buildingId, name: r.unitText || `Imported unit ${nNewUnits+1}`, visible:true, createdAt:new Date().toISOString()};
           db.units.push(nu);
@@ -1939,8 +2120,9 @@ function renderImportPreview(rows){
           nNewUnits++;
         }
       }
-      if(!unitId) unitId = db.units[0] && db.units[0].id;
-      if(!unitId) return;
+      // Each row must land on the unit that was actually detected/chosen for
+      // it — never on an arbitrary default — so skip rather than guess.
+      if(!unitId){ nSkippedNoUnit++; return; }
       if(r.kind==='income'){
         db.income.push({id:uid(), unitId, date:r.date, amount:r.amount, note:r.category, timestamp:new Date().toISOString()});
         nInc++;
@@ -1949,8 +2131,8 @@ function renderImportPreview(rows){
         nExp++;
       }
     });
-    logActivity(`Smart import added ${nInc} income and ${nExp} expense entries${nNewUnits?` (created ${nNewUnits} new unit${nNewUnits===1?'':'s'})`:''}${skipped?`, skipped ${skipped} likely duplicate(s)`:''}.`, 'create');
-    persist(); closeModal(); toast(`Imported ${nInc+nExp} entries${nNewUnits?`, ${nNewUnits} new unit${nNewUnits===1?'':'s'} added`:''}${skipped?`, ${skipped} duplicate(s) skipped`:''}`); renderView();
+    logActivity(`Smart import added ${nInc} income and ${nExp} expense entries${nNewUnits?` (created ${nNewUnits} new unit${nNewUnits===1?'':'s'})`:''}${skipped?`, skipped ${skipped} likely duplicate(s)`:''}${(skippedNoUnit+nSkippedNoUnit)?`, skipped ${skippedNoUnit+nSkippedNoUnit} row(s) with no unit selected`:''}.`, 'create');
+    persist(); closeModal(); toast(`Imported ${nInc+nExp} entries${nNewUnits?`, ${nNewUnits} new unit${nNewUnits===1?'':'s'} added`:''}${skipped?`, ${skipped} duplicate(s) skipped`:''}${skippedNoUnit?`, ${skippedNoUnit} row(s) without a unit skipped`:''}`); renderView();
   };
 }
 
