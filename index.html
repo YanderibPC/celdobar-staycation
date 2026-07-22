@@ -219,6 +219,9 @@ textarea#import-text{width:100%;min-height:150px;resize:vertical;font-family:'Je
 .import-divider{display:flex;align-items:center;gap:10px;margin:16px 0;color:var(--ink-soft);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;}
 .import-divider::before,.import-divider::after{content:'';flex:1;height:1px;background:var(--line);}
 .import-new-tag{background:rgba(91,33,214,.12);color:var(--purple);}
+.import-dup-tag{background:rgba(242,168,29,.22);color:#8a5f0e;cursor:help;}
+.import-row-dup{background:rgba(242,168,29,.07);}
+.import-row-dup:hover{background:rgba(242,168,29,.12)!important;}
 .badge-count{background:var(--gold);color:var(--ink);border-radius:99px;padding:1px 8px;font-size:11px;font-weight:800;margin-left:6px;}
 
 /* ---------- Misc ---------- */
@@ -1432,12 +1435,26 @@ function openSmartImport(){
   openModal(`
     <div class="modal-head"><h3>Smart import</h3><button class="modal-close" onclick="closeModal()">${icon('close')}</button></div>
     <div class="modal-body">
-      <label>Upload a spreadsheet file</label>
+      <label>Upload spreadsheet file(s)</label>
       <div class="import-file-drop" id="import-file-drop">
         ${icon('upload')}
-        <div>Drop a .xlsx, .xls, .csv or .tsv file here, or click to browse</div>
+        <div>Drop one or more .xlsx, .xls, .csv or .tsv files here, or click to browse</div>
         <div class="file-name" id="import-file-name"></div>
-        <input type="file" id="import-file-input" accept=".xlsx,.xls,.csv,.tsv" style="display:none">
+        <input type="file" id="import-file-input" accept=".xlsx,.xls,.csv,.tsv" multiple style="display:none">
+      </div>
+      <div class="import-divider">or</div>
+      <div class="import-drop">
+        <label>Import from a Google Sheets link</label>
+        <div class="field-row">
+          <div class="field" style="flex:2;min-width:220px;">
+            <input type="text" id="import-gsheet-url" placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=0">
+          </div>
+          <div class="field" style="flex:0 0 auto;">
+            <button class="btn btn-primary" id="import-gsheet-btn" type="button" style="white-space:nowrap;">${icon('upload')} Fetch sheet</button>
+          </div>
+        </div>
+        <p class="hint" style="margin-top:0;">The sheet must be shared as <strong>"Anyone with the link can view"</strong>. Pulls the tab referenced by the link's <span class="mono">gid</span> (or the first tab if none is specified) — paste a separate link per tab if you need more than one.</p>
+        <div id="import-gsheet-status"></div>
       </div>
       <div class="import-divider">or</div>
       <div class="import-drop">
@@ -1460,7 +1477,7 @@ function openSmartImport(){
         </div>
       </div>
       <button class="btn btn-primary" id="import-parse-btn" type="button">${icon('upload')} Parse pasted data</button>
-      <p class="hint" id="import-file-hint" style="display:none;margin-top:10px;">Analyzing every sheet in the file and matching each row to an existing unit — rows for units that don't exist yet will be added as new entries.</p>
+      <p class="hint" id="import-file-hint" style="display:none;margin-top:10px;">Analyzing every sheet in each file and matching each row to an existing unit — rows for units that don't exist yet will be added as new entries.</p>
       <div id="import-preview-wrap" style="margin-top:18px;"></div>
     </div>
     <div class="modal-foot">
@@ -1478,50 +1495,166 @@ function openSmartImport(){
 
   const dropZone = document.getElementById('import-file-drop');
   const fileInput = document.getElementById('import-file-input');
-  const handleFile = (file)=>{
-    if(!file) return;
-    document.getElementById('import-file-name').textContent = file.name;
+  const fileNameEl = document.getElementById('import-file-name');
+
+  const parseFilePromise = (file)=> new Promise(resolve=>{
+    parseSpreadsheetFile(file, (rows, err)=> resolve({file, rows, err}));
+  });
+
+  const handleFiles = (fileList)=>{
+    const files = Array.from(fileList||[]).filter(Boolean);
+    if(!files.length) return;
+    fileNameEl.innerHTML = files.map(f=>`<div>${escapeHtml(f.name)} <span class="hint">— analyzing…</span></div>`).join('');
     document.getElementById('import-file-hint').style.display = 'block';
-    parseSpreadsheetFile(file, (rows, err)=>{
-      if(err){ toast(err,'error'); return; }
-      renderImportPreview(rows);
+
+    Promise.all(files.map(parseFilePromise)).then(results=>{
+      let allRows = [];
+      const summary = results.map(r=>{
+        if(r.err){ return `<div>${escapeHtml(r.file.name)} — <span style="color:#a3271b;">${escapeHtml(r.err)}</span></div>`; }
+        allRows = allRows.concat(r.rows);
+        return `<div>${escapeHtml(r.file.name)} — <span style="color:#296648;">${r.rows.length} row(s) detected</span></div>`;
+      });
+      fileNameEl.innerHTML = summary.join('');
+      if(!allRows.length){ toast('No usable rows found in the file(s)','error'); return; }
+      renderImportPreview(allRows);
     });
   };
   dropZone.addEventListener('click', ()=> fileInput.click());
-  fileInput.addEventListener('change', e=> handleFile(e.target.files[0]));
+  fileInput.addEventListener('change', e=> handleFiles(e.target.files));
   ['dragover','dragenter'].forEach(ev=> dropZone.addEventListener(ev, e=>{ e.preventDefault(); dropZone.classList.add('drag-over'); }));
   ['dragleave','drop'].forEach(ev=> dropZone.addEventListener(ev, e=>{ e.preventDefault(); dropZone.classList.remove('drag-over'); }));
   dropZone.addEventListener('drop', e=>{
-    const file = e.dataTransfer.files && e.dataTransfer.files[0];
-    handleFile(file);
+    handleFiles(e.dataTransfer.files);
   });
+
+  const gsheetBtn = document.getElementById('import-gsheet-btn');
+  const gsheetStatus = document.getElementById('import-gsheet-status');
+  gsheetBtn.addEventListener('click', ()=>{
+    const url = document.getElementById('import-gsheet-url').value.trim();
+    if(!url){ toast('Paste a Google Sheets link first','error'); return; }
+    gsheetStatus.innerHTML = `<p class="hint">Fetching sheet…</p>`;
+    gsheetBtn.disabled = true;
+    importFromGoogleSheetLink(url, (rows, err)=>{
+      gsheetBtn.disabled = false;
+      if(err){ gsheetStatus.innerHTML = `<p class="hint" style="color:#a3271b;">${escapeHtml(err)}</p>`; return; }
+      gsheetStatus.innerHTML = '';
+      renderImportPreview(rows);
+    });
+  });
+}
+
+/* Import from a public Google Sheets link by pulling its CSV export.
+   Only works for sheets shared as "Anyone with the link can view" — Google
+   serves the CSV export of public sheets with open CORS, but private sheets
+   will fail here since there's no OAuth flow in a static page. */
+function importFromGoogleSheetLink(url, callback){
+  const idMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if(!idMatch){ callback(null, "That doesn't look like a Google Sheets link."); return; }
+  const sheetId = idMatch[1];
+  const gidMatch = url.match(/[?#&]gid=(\d+)/);
+  const gid = gidMatch ? gidMatch[1] : '0';
+  const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+
+  fetch(csvUrl)
+    .then(res=>{
+      if(!res.ok) throw new Error('status ' + res.status);
+      const ct = res.headers.get('content-type')||'';
+      if(ct.includes('text/html')) throw new Error('not shared');
+      return res.text();
+    })
+    .then(text=>{
+      const parsed = Papa.parse(text, {skipEmptyLines:true});
+      let rows = (parsed.data||[]).filter(r=>r && r.length && r.join('').trim());
+      if(!rows.length){ callback(null, 'No usable rows found in that sheet.'); return; }
+      const mapped = mapRawRows(rows);
+      callback(mapped);
+    })
+    .catch(err=>{
+      console.warn('gsheet import failed', err);
+      callback(null, "Couldn't fetch that sheet — make sure it's shared as \"Anyone with the link can view\", then try again.");
+    });
 }
 
 /* Read a real spreadsheet file (.xlsx/.xls/.csv/.tsv), analyze every sheet,
    and hand back rows in the same shape smartParse produces from pasted text. */
+/* Normalize text for fuzzy matching: lowercase, collapse punctuation/whitespace. */
+function normalizeForMatch(s){
+  return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+}
+/* Find an existing unit whose name matches (exactly, or as a substring in
+   either direction) the given text — used both when scanning row cells and
+   when falling back to a sheet/file name hint. */
+function findUnitMatch(text){
+  const norm = normalizeForMatch(text);
+  if(!norm) return null;
+  let found = db.units.find(u=> normalizeForMatch(u.name)===norm);
+  if(found) return found;
+  found = db.units.find(u=>{
+    const un = normalizeForMatch(u.name);
+    return un && (norm.includes(un) || un.includes(norm));
+  });
+  return found || null;
+}
+/* Same idea for buildings, used to place a brand-new unit under the right
+   building when a sheet/file/column names the building rather than the unit. */
+function findBuildingMatch(text){
+  const norm = normalizeForMatch(text);
+  if(!norm) return null;
+  let found = db.buildings.find(b=> normalizeForMatch(b.name)===norm);
+  if(found) return found;
+  found = db.buildings.find(b=>{
+    const bn = normalizeForMatch(b.name);
+    return bn && (norm.includes(bn) || bn.includes(norm));
+  });
+  return found || null;
+}
+/* Parse a money-looking string into a signed number, handling currency
+   symbols, thousands separators, and both accounting-negative styles:
+   parentheses "(1,200.00)" and a trailing minus "1200-". */
+function parseMoneyString(s){
+  if(s==null) return NaN;
+  s = String(s).trim();
+  if(!s) return NaN;
+  let neg = false;
+  if(/^\(.*\)$/.test(s)){ neg = true; s = s.slice(1,-1); }
+  if(/-\s*$/.test(s)){ neg = true; s = s.replace(/-\s*$/,''); }
+  s = s.replace(/[₱$,\s]/g,'');
+  if(/^-/.test(s)){ neg = true; s = s.replace(/^-/,''); }
+  const n = parseFloat(s);
+  if(isNaN(n)) return NaN;
+  return neg ? -n : n;
+}
+
 function parseSpreadsheetFile(file, callback){
   const ext = (file.name.split('.').pop()||'').toLowerCase();
+  const baseName = file.name.replace(/\.[^.]+$/,'');
   const reader = new FileReader();
   reader.onerror = ()=> callback(null, 'Could not read that file');
   reader.onload = (e)=>{
     try{
-      let allRows = [];
+      let parsedRows = [];
       if(ext==='csv' || ext==='tsv' || ext==='txt'){
         const parsed = Papa.parse(e.target.result, {skipEmptyLines:true, delimiter: ext==='tsv' ? '\t' : undefined});
-        allRows = parsed.data;
+        const cleanRows = (parsed.data||[]).filter(r=>r && r.length && r.join('').trim());
+        // The file's own name is a useful hint if a row's unit isn't otherwise identifiable
+        // (e.g. someone exports one CSV per unit, named "Villa A.csv").
+        parsedRows = mapRawRows(cleanRows, {nameHint: baseName});
       } else {
         const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
-        // Analyze every tab/sheet in the workbook, not just the first
+        // Analyze every tab in the workbook separately — each sheet gets its own
+        // header-row detection, and the tab's name is used as a hint (e.g. a
+        // "Unit 101" tab routes its rows to that unit) so nothing from any
+        // sheet gets silently dropped or misfiled into the wrong entry.
         wb.SheetNames.forEach(sheetName=>{
           const sheet = wb.Sheets[sheetName];
           const json = XLSX.utils.sheet_to_json(sheet, {header:1, raw:false, defval:''});
-          json.forEach(r=> allRows.push(r));
+          const cleanRows = json.filter(r=>r && r.length && r.join('').trim());
+          if(!cleanRows.length) return;
+          parsedRows = parsedRows.concat(mapRawRows(cleanRows, {nameHint: sheetName}));
         });
       }
-      allRows = allRows.filter(r=>r && r.length && r.join('').trim());
-      if(!allRows.length){ callback(null, 'No usable rows found in that file'); return; }
-      const rows = mapRawRows(allRows);
-      callback(rows);
+      if(!parsedRows.length){ callback(null, 'No usable rows found in that file'); return; }
+      callback(parsedRows);
     }catch(err){
       console.warn('spreadsheet parse failed', err);
       callback(null, 'Could not parse that file — try exporting it as .xlsx or .csv');
@@ -1551,18 +1684,31 @@ function smartParse(raw){
 }
 
 /* Shared analysis step: takes a plain array-of-arrays (from pasted text,
-   a .csv/.tsv, or every sheet of an .xlsx/.xls workbook) and heuristically
+   a .csv/.tsv, or one sheet of an .xlsx/.xls workbook) and heuristically
    maps each row onto Income or Expenses, matching it to an existing unit
    where possible. Rows whose unit can't be matched are flagged with
    isNewUnit so the preview / confirm step can add them as new entries
-   instead of silently dumping them onto an unrelated unit. */
-function mapRawRows(rows){
+   instead of silently dropping them or dumping them onto an unrelated unit.
+   `hint.nameHint`, when given (a sheet tab name or a file's own name), is
+   used as a last-resort unit/building signal for rows that don't otherwise
+   name one — e.g. a workbook tab called "Villa A" routes its rows there. */
+function mapRawRows(rows, hint){
+  hint = hint || {};
+  const genericNameRe = /^(sheet\d*|summary|totals?|overview|dashboard|data|import|export|report)$/i;
+  const hintIsUsable = hint.nameHint && !genericNameRe.test(hint.nameHint.trim());
   if(!rows.length) return [];
-  // detect header row
+  // detect header row — require several short, label-like cells to match, and
+  // never treat the only row as a header (that would leave zero data rows,
+  // e.g. a single row like "2026-06-03, 30000, airbnb payout income" must
+  // not be mistaken for a header just because "income" appears in a note).
   const headerKeywords = ['date','unit','amount','category','type','note','description','income','expense','property','building'];
   let headerIdx = -1;
-  const firstRow = rows[0].map(x=>String(x).toLowerCase());
-  if(firstRow.some(cell=>headerKeywords.some(k=>cell.includes(k)))) headerIdx = 0;
+  const firstRow = rows[0].map(x=>String(x).trim().toLowerCase());
+  if(rows.length>1){
+    const keywordHits = firstRow.filter(cell=> cell.length>0 && cell.length<=20 &&
+      headerKeywords.some(k=> cell===k || cell.startsWith(k) || cell.endsWith(k))).length;
+    if(keywordHits>=2) headerIdx = 0;
+  }
 
   let colMap = {};
   let dataRows = rows;
@@ -1580,6 +1726,7 @@ function mapRawRows(rows){
   }
 
   const dateRe = /(\d{4}-\d{1,2}-\d{1,2})|(\d{1,2}\/\d{1,2}\/\d{2,4})/;
+  const moneyRe = /^\(?-?[₱$]?\s?[\d,]+(\.\d+)?\)?-?$/;
 
   const parsedRows = dataRows.map(cells=>{
     cells = cells.map(x=>String(x??'').trim());
@@ -1594,12 +1741,24 @@ function mapRawRows(rows){
     // fallback: scan all cells for whatever wasn't mapped
     cells.forEach(cell=>{
       if(!date && dateRe.test(cell)) date = cell;
-      else if(!amount && /^[₱$]?-?[\d,]+(\.\d+)?$/.test(cell.replace(/\s/g,''))) amount = cell;
+      else if(!amount && moneyRe.test(cell.replace(/\s/g,''))) amount = cell;
     });
     let matchedExistingUnit = false;
     if(!unitText){
-      const match = db.units.find(u=>cells.some(c=>c.toLowerCase().includes(u.name.toLowerCase())));
-      if(match){ unitText = match.name; matchedExistingUnit = true; }
+      for(const c of cells){
+        const m = findUnitMatch(c);
+        if(m){ unitText = m.name; matchedExistingUnit = true; break; }
+      }
+    }
+    // fall back to the sheet tab / file name as a unit signal (e.g. a "Villa A" tab)
+    if(!unitText && hintIsUsable){
+      const m = findUnitMatch(hint.nameHint);
+      if(m){ unitText = m.name; matchedExistingUnit = true; }
+      else unitText = hint.nameHint.trim();
+    }
+    if(!buildingText && hintIsUsable){
+      const bm = findBuildingMatch(hint.nameHint);
+      if(bm) buildingText = bm.name;
     }
     if(!category && !colMap.category){
       const nonDateAmount = cells.filter(c=>c!==date && c!==amount);
@@ -1626,7 +1785,13 @@ function mapRawRows(rows){
     }
     if(!normDate) normDate = todayISO();
 
-    let normAmount = amount ? parseFloat(String(amount).replace(/[₱$,\s]/g,'')) : NaN;
+    // parse amount, keeping the original sign (accounting-style negatives use
+    // parentheses or a trailing minus) before storing it as a positive
+    // magnitude — the ledger always stores positive amounts and relies on
+    // the income/expense split for sign, so a negative-formatted expense
+    // must not be silently discarded.
+    const rawAmount = amount!=null ? parseMoneyString(amount) : NaN;
+    const normAmount = isNaN(rawAmount) ? NaN : Math.abs(rawAmount);
 
     // detect type
     let kind = 'expense-variable';
@@ -1638,8 +1803,7 @@ function mapRawRows(rows){
     // resolve unit id against existing units ("relevant tabs")
     let unitId = null;
     if(unitText){
-      const found = db.units.find(u=>u.name.toLowerCase()===String(unitText).toLowerCase()) ||
-                     db.units.find(u=>u.name.toLowerCase().includes(String(unitText).toLowerCase()));
+      const found = findUnitMatch(unitText);
       if(found){ unitId = found.id; matchedExistingUnit = true; }
     }
     // no existing unit matched this row -> it'll be added as a brand new unit/entry on confirm
@@ -1651,51 +1815,106 @@ function mapRawRows(rows){
   return parsedRows;
 }
 
+/* Flags each row as a likely duplicate of either (a) an entry already in the
+   ledger with the same unit, date and amount, or (b) another row already
+   seen earlier in this same import batch. Flagged rows default to excluded
+   (unchecked) so a re-import of the same file doesn't silently double an
+   entry, but the person can still tick "Import" to include one on purpose —
+   e.g. two genuinely separate ₱1,500 cleaning fees on the same day. */
+function annotateDuplicates(rows){
+  const seenInBatch = new Map();
+  rows.forEach(r=>{
+    let reason = null;
+    if(!r.isNewUnit && r.unitId){
+      const list = r.kind==='income' ? db.income : db.expenses;
+      const match = list.find(x=> x.unitId===r.unitId && x.date===r.date && Math.abs((parseFloat(x.amount)||0)-r.amount)<0.01);
+      if(match) reason = 'Matches an entry already in the ledger — same unit, date and amount';
+    }
+    if(!reason){
+      const key = [r.unitId || ('new:'+r.unitText.toLowerCase()), r.date, r.amount.toFixed(2), r.kind].join('|');
+      if(seenInBatch.has(key)) reason = 'Duplicate of another row in this import batch';
+      else seenInBatch.set(key, true);
+    }
+    r.dupWarning = reason;
+    if(r.__include===undefined) r.__include = !reason;
+  });
+}
+
 function renderImportPreview(rows){
   const wrap = document.getElementById('import-preview-wrap');
   if(!rows.length){ wrap.innerHTML = `<div class="empty-state">Could not detect any usable rows. Try including a header row (date, unit, amount, category).</div>`; return; }
-  const newCount = rows.filter(r=>r.isNewUnit).length;
-  wrap.innerHTML = `
-    <p class="hint">Detected <strong>${rows.length}</strong> row(s)${newCount?`, including <strong>${newCount}</strong> for a unit not yet in the ledger — these will be added as new entries`:''}. Review the target and unit for each, then confirm.<span class="badge-count">${rows.length}</span></p>
-    <div class="table-wrap"><table class="import-preview-table">
-      <thead><tr><th>Date</th><th>Amount</th><th>Target</th><th>Unit</th><th>Category / Note</th></tr></thead>
-      <tbody>
-      ${rows.map((r,i)=>`<tr>
-        <td><input type="date" value="${r.date}" data-i="${i}" data-f="date" style="width:130px"></td>
-        <td><input type="number" step="0.01" value="${r.amount}" data-i="${i}" data-f="amount" style="width:100px"></td>
-        <td><select data-i="${i}" data-f="kind" style="width:150px">
-          <option value="income" ${r.kind==='income'?'selected':''}>Income</option>
-          <option value="expense-constant" ${r.kind==='expense-constant'?'selected':''}>Expense — Constant</option>
-          <option value="expense-variable" ${r.kind==='expense-variable'?'selected':''}>Expense — Variable</option>
-        </select></td>
-        <td><select data-i="${i}" data-f="unitChoice" style="width:190px">
-          ${r.isNewUnit ? `<option value="NEW" selected>+ New unit: ${escapeHtml(r.unitText)}</option>` : ''}
-          ${db.units.map(u=>`<option value="${u.id}" ${!r.isNewUnit && u.id===r.unitId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
-          ${!r.isNewUnit && r.unitText ? `<option value="NEW:${escapeHtml(r.unitText)}">+ New unit: ${escapeHtml(r.unitText)}</option>` : ''}
-        </select>${r.isNewUnit?`<div><span class="tag import-new-tag">new</span></div>`:''}</td>
-        <td><input type="text" value="${escapeHtml(r.category)}" data-i="${i}" data-f="category" style="width:170px"></td>
-      </tr>`).join('')}
-      </tbody>
-    </table></div>
-  `;
-  wrap.querySelectorAll('input,select').forEach(el=>el.addEventListener('input', e=>{
-    const i = +e.target.dataset.i, f = e.target.dataset.f;
-    if(f==='unitChoice'){
-      const v = e.target.value;
-      if(v==='NEW' || v.startsWith('NEW:')){ rows[i].isNewUnit = true; rows[i].unitId = null; if(v.startsWith('NEW:')) rows[i].unitText = v.slice(4); }
-      else { rows[i].isNewUnit = false; rows[i].unitId = v; }
-      return;
-    }
-    rows[i][f] = f==='amount' ? parseFloat(e.target.value)||0 : e.target.value;
-  }));
+
+  function draw(){
+    annotateDuplicates(rows);
+    const newCount = rows.filter(r=>r.isNewUnit).length;
+    const dupCount = rows.filter(r=>r.dupWarning).length;
+    wrap.innerHTML = `
+      <p class="hint">Detected <strong>${rows.length}</strong> row(s)${newCount?`, including <strong>${newCount}</strong> for a unit not yet in the ledger — these will be added as new entries`:''}. Review the target and unit for each, then confirm.<span class="badge-count">${rows.length}</span></p>
+      ${dupCount?`<p class="hint" style="color:#8a5f0e;font-weight:700;">⚠ ${dupCount} row(s) look like duplicates and are unchecked below — review the "Import" column and tick any you actually want included.</p>`:''}
+      <div class="table-wrap"><table class="import-preview-table">
+        <thead><tr><th>Import</th><th>Date</th><th>Amount</th><th>Target</th><th>Unit</th><th>Category / Note</th></tr></thead>
+        <tbody>
+        ${rows.map((r,i)=>`<tr class="${r.dupWarning?'import-row-dup':''}">
+          <td style="text-align:center;"><input type="checkbox" data-i="${i}" data-f="include" ${r.__include?'checked':''}></td>
+          <td><input type="date" value="${r.date}" data-i="${i}" data-f="date" style="width:130px"></td>
+          <td><input type="number" step="0.01" value="${r.amount}" data-i="${i}" data-f="amount" style="width:100px"></td>
+          <td><select data-i="${i}" data-f="kind" style="width:150px">
+            <option value="income" ${r.kind==='income'?'selected':''}>Income</option>
+            <option value="expense-constant" ${r.kind==='expense-constant'?'selected':''}>Expense — Constant</option>
+            <option value="expense-variable" ${r.kind==='expense-variable'?'selected':''}>Expense — Variable</option>
+          </select></td>
+          <td><select data-i="${i}" data-f="unitChoice" style="width:190px">
+            ${r.isNewUnit ? `<option value="NEW" selected>+ New unit: ${escapeHtml(r.unitText)}</option>` : ''}
+            ${db.units.map(u=>`<option value="${u.id}" ${!r.isNewUnit && u.id===r.unitId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+            ${!r.isNewUnit && r.unitText ? `<option value="NEW:${escapeHtml(r.unitText)}">+ New unit: ${escapeHtml(r.unitText)}</option>` : ''}
+          </select>
+          <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">
+            ${r.isNewUnit?`<span class="tag import-new-tag">new</span>`:''}
+            ${r.dupWarning?`<span class="tag import-dup-tag" title="${escapeHtml(r.dupWarning)}">⚠ possible duplicate</span>`:''}
+          </div></td>
+          <td><input type="text" value="${escapeHtml(r.category)}" data-i="${i}" data-f="category" style="width:170px"></td>
+        </tr>`).join('')}
+        </tbody>
+      </table></div>
+    `;
+    wrap.querySelectorAll('input,select').forEach(el=>{
+      const i = +el.dataset.i, f = el.dataset.f;
+      if(f==='include'){
+        el.addEventListener('change', e=>{ rows[i].__include = e.target.checked; });
+        return;
+      }
+      if(f==='unitChoice'){
+        el.addEventListener('change', e=>{
+          const v = e.target.value;
+          if(v==='NEW' || v.startsWith('NEW:')){ rows[i].isNewUnit = true; rows[i].unitId = null; if(v.startsWith('NEW:')) rows[i].unitText = v.slice(4); }
+          else { rows[i].isNewUnit = false; rows[i].unitId = v; }
+          rows[i].__include = undefined; // re-evaluate default now that the target changed
+          draw();
+        });
+        return;
+      }
+      // date / amount / kind / category: capture every keystroke, but only
+      // re-run duplicate detection (and redraw) once the value is committed,
+      // so typing an amount doesn't yank focus away mid-keystroke.
+      el.addEventListener('input', e=>{ rows[i][f] = f==='amount' ? parseFloat(e.target.value)||0 : e.target.value; });
+      if(f==='date' || f==='amount' || f==='kind'){
+        el.addEventListener('change', ()=>{ rows[i].__include = undefined; draw(); });
+      }
+    });
+  }
+  draw();
+
   const confirmBtn = document.getElementById('import-confirm-btn');
   confirmBtn.style.display='inline-flex';
   confirmBtn.onclick = ()=>{
     if(!db.units.length && !rows.some(r=>r.isNewUnit)){ toast('Add at least one unit before importing','error'); return; }
+    const toImport = rows.filter(r=>r.__include!==false);
+    const skipped = rows.length - toImport.length;
+    if(!toImport.length){ toast('Nothing selected to import — tick "Import" on at least one row','error'); return; }
     let nInc=0, nExp=0, nNewUnits=0;
     const createdUnitsByName = {}; // cache so repeated rows for the same new unit share one unit record
     let fallbackBuildingId = db.buildings[0] && db.buildings[0].id;
-    rows.forEach(r=>{
+    toImport.forEach(r=>{
       let unitId = r.unitId;
       if(r.isNewUnit){
         const key = (r.unitText||'Imported unit').toLowerCase();
@@ -1730,8 +1949,8 @@ function renderImportPreview(rows){
         nExp++;
       }
     });
-    logActivity(`Smart import added ${nInc} income and ${nExp} expense entries${nNewUnits?` (created ${nNewUnits} new unit${nNewUnits===1?'':'s'})`:''}.`, 'create');
-    persist(); closeModal(); toast(`Imported ${nInc+nExp} entries${nNewUnits?`, ${nNewUnits} new unit${nNewUnits===1?'':'s'} added`:''}`); renderView();
+    logActivity(`Smart import added ${nInc} income and ${nExp} expense entries${nNewUnits?` (created ${nNewUnits} new unit${nNewUnits===1?'':'s'})`:''}${skipped?`, skipped ${skipped} likely duplicate(s)`:''}.`, 'create');
+    persist(); closeModal(); toast(`Imported ${nInc+nExp} entries${nNewUnits?`, ${nNewUnits} new unit${nNewUnits===1?'':'s'} added`:''}${skipped?`, ${skipped} duplicate(s) skipped`:''}`); renderView();
   };
 }
 
