@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Celdobar &mdash; Staycation Ledger</title>
+<title>Celdobar Staycation Ledger</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,700;0,9..144,900;1,9..144,600&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
@@ -726,7 +726,7 @@ function renderBuildings(c){
   if(db.buildings.length===0){
     c.innerHTML = `<div class="card empty-state">${icon('empty')}<h3>No buildings yet</h3><p>Add your first building to start organizing units.</p>
       <button class="btn btn-primary" id="add-building-btn-empty">${icon('plus')} Add building</button></div>`;
-    c.querySelector('#add-building-btn-empty').addEventListener('click', openBuildingForm);
+    c.querySelector('#add-building-btn-empty').addEventListener('click', ()=>openBuildingForm());
     return;
   }
 
@@ -819,7 +819,7 @@ function renderBuildings(c){
     openUnitDetail(el.dataset.unit);
   }));
 
-  document.getElementById('add-building-btn').addEventListener('click', openBuildingForm);
+  document.getElementById('add-building-btn').addEventListener('click', ()=>openBuildingForm());
   document.getElementById('toggle-show-hidden').addEventListener('change', e=>{ state.buildings.showHidden=e.target.checked; renderBuildings(c); });
 }
 
