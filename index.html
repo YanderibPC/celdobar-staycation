@@ -2650,7 +2650,7 @@ function importFromGoogleSheetLink(url, callback){
     const parsed = Papa.parse(text, {skipEmptyLines:true});
     let rows = (parsed.data||[]).filter(r=>r && r.length && r.join('').trim());
     if(!rows.length){ callback(null, 'No usable rows found in that sheet.'); return; }
-    callback(mapRawRows(rows));
+    callback(isWideFormat(rows) ? mapWideFormatRows(rows) : mapRawRows(rows));
   }
 
   fetch(csvUrl)
@@ -2763,6 +2763,117 @@ function parseFlexibleDate(raw){
   return null;
 }
 
+/* ---- Wide / pivot-table support -----------------------------------------
+   The built-in mapRawRows() above only understands "long" transactional
+   data: one row = one record (date, unit, amount, category...). It has no
+   concept of a pivot layout — which is exactly the shape of the ledger's own
+   real source data (see the IMPORTED_LEDGER_DATA comment above: "wide
+   monthly-summary layout, one column per unit, one row per month"). Feeding
+   that shape through the long-format parser causes two compounding bugs:
+   (1) only the first numeric cell in each row gets read as "amount" and
+   every other unit's value on that row is silently discarded, and (2) since
+   none of the data cells contain a unit name, the row falls back to using
+   the sheet/tab name (e.g. "Income" or "Expenses") as if it *were* a unit —
+   dumping every row's (partial, wrong) data onto one bogus fabricated unit.
+   That fabricated-unit bug is fixed separately in mapRawRows() above; this
+   block adds the missing capability itself: detect a pivot layout and
+   correctly split each row into one entry per unit column. ---------------- */
+
+/* A table "looks wide" when most data rows carry several numeric values
+   across their columns (one per unit) rather than the single "amount"
+   column a transactional row would have. */
+function isWideFormat(rows){
+  if(!rows || rows.length<2) return false;
+  const header = rows[0];
+  if(!header || header.length<4) return false; // need a label column + at least 3 unit columns
+  const dataRows = rows.slice(1).filter(r=>r && r.length && r.join('').trim());
+  if(!dataRows.length) return false;
+  // A date like "2026-05-05" is itself parsed as the number 2026 by
+  // parseFloat/parseMoneyString, so it must be excluded here or an ordinary
+  // transactional row (unit, date, amount, category, note) gets miscounted
+  // as having 2 numeric columns and wrongly flagged as a pivot table.
+  const dateLikeRe = /(\d{4}-\d{1,2}-\d{1,2})|(\d{1,2}\/\d{1,2}\/\d{2,4})/;
+  const rowsWithMultipleNumeric = dataRows.filter(r=>{
+    let numeric=0;
+    for(let i=1;i<r.length;i++){
+      const v = r[i];
+      if(v==null || String(v).trim()==='') continue;
+      const s = String(v).trim();
+      if(dateLikeRe.test(s)) continue;
+      if(!isNaN(parseMoneyString(s))) numeric++;
+      if(numeric>=3) break;
+    }
+    return numeric>=3;
+  }).length;
+  return rowsWithMultipleNumeric/dataRows.length >= 0.5;
+}
+
+/* Pivot a wide table (header row = unit names, each subsequent row = one
+   month) into the same flat row shape mapRawRows() produces, so it can feed
+   the same preview/confirm UI. Each nonzero cell becomes its own entry. */
+function mapWideFormatRows(rows, hint){
+  hint = hint || {};
+  const header = rows[0].map(x=>String(x??'').trim());
+  const dataRows = rows.slice(1).filter(r=>r && r.length && r.join('').trim());
+
+  // The sheet/tab/file name (e.g. "Income" or "Expenses") tells us the kind
+  // for every entry pulled from this table.
+  let sheetKind = null;
+  if(hint.nameHint){
+    if(/income|revenue|payout|booking|gross/i.test(hint.nameHint)) sheetKind = 'income';
+    else if(/expense|cost|expenditure|cogs/i.test(hint.nameHint)) sheetKind = 'expense-variable';
+  }
+
+  const unitCols = [];
+  for(let i=1;i<header.length;i++){ if(header[i] && header[i].trim()) unitCols.push(i); }
+
+  const out = [];
+  dataRows.forEach(r=>{
+    const label = r[0];
+    let rowDate = parseFlexibleDate(label);
+    if(!rowDate){
+      // handle a bare month name with no year in the same cell, e.g. "January"
+      const lc = String(label||'').trim().toLowerCase();
+      let mi = MONTHS_FULL.findIndex(m=>m.toLowerCase()===lc);
+      if(mi<0) mi = MONTHS.findIndex(m=>m.toLowerCase()===lc);
+      if(mi>=0){
+        let year = null;
+        [...r, ...header, hint.nameHint].forEach(c=>{
+          if(year) return;
+          const m4 = String(c??'').match(/\b(20\d{2})\b/);
+          if(m4) year = m4[1];
+        });
+        if(!year) year = String(new Date().getFullYear());
+        rowDate = `${year}-${String(mi+1).padStart(2,'0')}-05`;
+      }
+    }
+    if(!rowDate) return; // no usable date signal anywhere on this row — skip rather than guess
+
+    unitCols.forEach(ci=>{
+      const raw = r[ci];
+      if(raw==null || String(raw).trim()==='') return;
+      const amt = parseMoneyString(raw);
+      if(isNaN(amt) || amt===0) return;
+      const unitHeader = header[ci];
+      const matched = findUnitMatch(unitHeader);
+      out.push({
+        date: rowDate,
+        amount: Math.abs(amt),
+        unitText: matched ? matched.name : unitHeader,
+        buildingText: '',
+        unitId: matched ? matched.id : null,
+        isNewUnit: !matched,
+        noUnitDetected: false,
+        category: 'Imported',
+        note: 'Imported (monthly summary)',
+        kind: sheetKind || 'income',
+        raw: `${label} — ${unitHeader}: ${raw}`
+      });
+    });
+  });
+  return out;
+}
+
 function parseSpreadsheetFile(file, callback){
   const ext = (file.name.split('.').pop()||'').toLowerCase();
   const baseName = file.name.replace(/\.[^.]+$/,'');
@@ -2776,19 +2887,28 @@ function parseSpreadsheetFile(file, callback){
         const cleanRows = (parsed.data||[]).filter(r=>r && r.length && r.join('').trim());
         // The file's own name is a useful hint if a row's unit isn't otherwise identifiable
         // (e.g. someone exports one CSV per unit, named "Villa A.csv").
-        parsedRows = mapRawRows(cleanRows, {nameHint: baseName});
+        parsedRows = isWideFormat(cleanRows)
+          ? mapWideFormatRows(cleanRows, {nameHint: baseName})
+          : mapRawRows(cleanRows, {nameHint: baseName});
       } else {
         const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
         // Analyze every tab in the workbook separately — each sheet gets its own
         // header-row detection, and the tab's name is used as a hint (e.g. a
         // "Unit 101" tab routes its rows to that unit) so nothing from any
-        // sheet gets silently dropped or misfiled into the wrong entry.
+        // sheet gets silently dropped or misfiled into the wrong entry. Each
+        // sheet is also checked independently for a wide/pivot layout (one
+        // row per month, one column per unit) since a workbook commonly mixes
+        // a wide "Income" tab, a wide "Expenses" tab, and ordinary tabs.
         wb.SheetNames.forEach(sheetName=>{
           const sheet = wb.Sheets[sheetName];
           const json = XLSX.utils.sheet_to_json(sheet, {header:1, raw:false, defval:''});
           const cleanRows = json.filter(r=>r && r.length && r.join('').trim());
           if(!cleanRows.length) return;
-          parsedRows = parsedRows.concat(mapRawRows(cleanRows, {nameHint: sheetName}));
+          parsedRows = parsedRows.concat(
+            isWideFormat(cleanRows)
+              ? mapWideFormatRows(cleanRows, {nameHint: sheetName})
+              : mapRawRows(cleanRows, {nameHint: sheetName})
+          );
         });
       }
       if(!parsedRows.length){ callback(null, 'No usable rows found in that file'); return; }
@@ -2818,7 +2938,7 @@ function smartParse(raw){
     rows = raw.split('\n').filter(l=>l.trim()).map(l=>l.trim().split(/\s{2,}|\s*\|\s*|,\s*/).filter(Boolean));
   }
   rows = rows.filter(r=>r.length && r.join('').trim());
-  return mapRawRows(rows);
+  return isWideFormat(rows) ? mapWideFormatRows(rows) : mapRawRows(rows);
 }
 
 /* Shared analysis step: takes a plain array-of-arrays (from pasted text,
@@ -2837,7 +2957,17 @@ function smartParse(raw){
 function mapRawRows(rows, hint){
   hint = hint || {};
   const genericNameRe = /^(sheet\d*|summary|totals?|overview|dashboard|data|import|export|report)$/i;
-  const hintIsUsable = hint.nameHint && !genericNameRe.test(hint.nameHint.trim());
+  // A tab/file literally named "Income" or "Expenses" describes the *table*,
+  // not a unit — it must never be used as a fallback unit name (that bug
+  // caused an entire wide sheet to get dumped onto one bogus unit named
+  // "Income"). Use it only to guess the default kind for rows in that sheet.
+  const kindHintRe = /income|revenue|payout|booking|gross|expense|cost|expenditure|cogs/i;
+  const hintIsUsable = hint.nameHint && !genericNameRe.test(hint.nameHint.trim()) && !kindHintRe.test(hint.nameHint.trim());
+  let sheetKindHint = null;
+  if(hint.nameHint){
+    if(/income|revenue|payout|booking|gross/i.test(hint.nameHint)) sheetKindHint = 'income';
+    else if(/expense|cost|expenditure|cogs/i.test(hint.nameHint)) sheetKindHint = 'expense-variable';
+  }
   if(!rows.length) return [];
   // detect header row — require several short, label-like cells to match, and
   // never treat the only row as a header (that would leave zero data rows,
@@ -2886,18 +3016,29 @@ function mapRawRows(rows, hint){
     let typeText = colMap.type!==undefined ? cells[colMap.type] : null;
     let note = colMap.note!==undefined ? cells[colMap.note] : null;
 
-    // fallback: scan all cells for whatever wasn't mapped
-    cells.forEach(cell=>{
+    // Match against a known unit's name *before* scanning for a fallback
+    // amount. Many real unit names are themselves plain numbers (e.g.
+    // "3715"), and without this ordering that numeric unit code — if it
+    // appears earlier in the row than the real amount — was being read as
+    // the amount instead, silently importing the wrong figure.
+    let matchedExistingUnit = false;
+    let matchedUnitCellIdx = -1;
+    if(!unitText){
+      for(let ci=0; ci<cells.length; ci++){
+        const m = findUnitMatch(cells[ci]);
+        if(m){ unitText = m.name; matchedExistingUnit = true; matchedUnitCellIdx = ci; break; }
+      }
+    } else {
+      matchedUnitCellIdx = cells.indexOf(unitText);
+    }
+
+    // fallback: scan remaining cells (skipping whichever one was just
+    // identified as the unit) for whatever wasn't mapped
+    cells.forEach((cell,ci)=>{
+      if(ci===matchedUnitCellIdx) return;
       if(!date && dateRe.test(cell)) date = cell;
       else if(!amount && moneyRe.test(cell.replace(/\s/g,''))) amount = cell;
     });
-    let matchedExistingUnit = false;
-    if(!unitText){
-      for(const c of cells){
-        const m = findUnitMatch(c);
-        if(m){ unitText = m.name; matchedExistingUnit = true; break; }
-      }
-    }
     // fall back to the sheet tab / file name as a unit signal (e.g. a "Villa A" tab)
     let unitTextFromHintOnly = false;
     if(!unitText && hintIsUsable){
@@ -2941,6 +3082,7 @@ function mapRawRows(rows, hint){
     if(/income|payout|booking|revenue|gross/i.test(allText)) kind='income';
     else if(/constant|fixed|utilit|dues|insurance|rent|amortization|subscription/i.test(allText)) kind='expense-constant';
     else if(/variable|clean|repair|suppl|marketing|maintenance/i.test(allText)) kind='expense-variable';
+    else if(sheetKindHint) kind = sheetKindHint;
 
     // resolve unit id against existing units ("relevant tabs")
     let unitId = null;
