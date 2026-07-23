@@ -2638,6 +2638,20 @@ function importFromGoogleSheetLink(url, callback){
   const gidMatch = url.match(/[?#&]gid=(\d+)/);
   const gid = gidMatch ? gidMatch[1] : '0';
   const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+  // Google's export endpoint doesn't send CORS headers, so a direct
+  // cross-origin fetch from this page is blocked by the browser even when
+  // the sheet is shared as "Anyone with the link can view" — that setting
+  // only controls whether Google serves the file, not whether it lets other
+  // websites read the response. Fall back to a public CORS relay so the
+  // browser will allow the read.
+  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(csvUrl)}`;
+
+  function handleText(text){
+    const parsed = Papa.parse(text, {skipEmptyLines:true});
+    let rows = (parsed.data||[]).filter(r=>r && r.length && r.join('').trim());
+    if(!rows.length){ callback(null, 'No usable rows found in that sheet.'); return; }
+    callback(mapRawRows(rows));
+  }
 
   fetch(csvUrl)
     .then(res=>{
@@ -2646,16 +2660,20 @@ function importFromGoogleSheetLink(url, callback){
       if(ct.includes('text/html')) throw new Error('not shared');
       return res.text();
     })
-    .then(text=>{
-      const parsed = Papa.parse(text, {skipEmptyLines:true});
-      let rows = (parsed.data||[]).filter(r=>r && r.length && r.join('').trim());
-      if(!rows.length){ callback(null, 'No usable rows found in that sheet.'); return; }
-      const mapped = mapRawRows(rows);
-      callback(mapped);
-    })
-    .catch(err=>{
-      console.warn('gsheet import failed', err);
-      callback(null, "Couldn't fetch that sheet — make sure it's shared as \"Anyone with the link can view\", then try again.");
+    .then(handleText)
+    .catch(()=>{
+      // Direct fetch failed (almost always CORS) — retry through the proxy
+      // before giving up.
+      fetch(proxyUrl)
+        .then(res=>{ if(!res.ok) throw new Error('status ' + res.status); return res.text(); })
+        .then(text=>{
+          if(/<html[\s>]/i.test(text.slice(0,200))) throw new Error('not shared');
+          handleText(text);
+        })
+        .catch(err=>{
+          console.warn('gsheet import failed', err);
+          callback(null, "Couldn't fetch that sheet even via a CORS relay — make sure it's shared as \"Anyone with the link can view\" (not just to specific people), then try again.");
+        });
     });
 }
 
@@ -2825,10 +2843,19 @@ function mapRawRows(rows, hint){
   // never treat the only row as a header (that would leave zero data rows,
   // e.g. a single row like "2026-06-03, 30000, airbnb payout income" must
   // not be mistaken for a header just because "income" appears in a note).
+  //
+  // A real header row never contains anything that looks like an actual
+  // date or money amount — real data rows do. Without this guard, a first
+  // data row like "Unit 101, 2026-05-05, 28000, income, Airbnb payout" was
+  // being misread as a header (because "Unit 101" starts with "unit" and
+  // "income" matches exactly) and silently deleted from the import.
+  const dateRe = /(\d{4}-\d{1,2}-\d{1,2})|(\d{1,2}\/\d{1,2}\/\d{2,4})/;
+  const moneyRe = /^\(?-?[₱$]?\s?[\d,]+(\.\d+)?\)?-?$/;
   const headerKeywords = ['date','unit','amount','category','type','note','description','income','expense','property','building'];
   let headerIdx = -1;
   const firstRow = rows[0].map(x=>String(x).trim().toLowerCase());
-  if(rows.length>1){
+  const firstRowLooksLikeData = firstRow.some(cell=> dateRe.test(cell) || moneyRe.test(cell.replace(/\s/g,'')));
+  if(rows.length>1 && !firstRowLooksLikeData){
     const keywordHits = firstRow.filter(cell=> cell.length>0 && cell.length<=20 &&
       headerKeywords.some(k=> cell===k || cell.startsWith(k) || cell.endsWith(k))).length;
     if(keywordHits>=2) headerIdx = 0;
@@ -2848,9 +2875,6 @@ function mapRawRows(rows, hint){
       else if(/note|desc|memo|source/.test(h)) colMap.note=i;
     });
   }
-
-  const dateRe = /(\d{4}-\d{1,2}-\d{1,2})|(\d{1,2}\/\d{1,2}\/\d{2,4})/;
-  const moneyRe = /^\(?-?[₱$]?\s?[\d,]+(\.\d+)?\)?-?$/;
 
   const parsedRows = dataRows.map(cells=>{
     cells = cells.map(x=>String(x??'').trim());
