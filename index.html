@@ -1393,6 +1393,39 @@ function expensesOf(unitId){ return db.expenses.filter(e=>e.unitId===unitId); }
 function yearOf(dateStr){ return parseInt((dateStr||'').slice(0,4),10); }
 function monthOf(dateStr){ return parseInt((dateStr||'').slice(5,7),10)-1; }
 
+/* Scan a chunk of free text for an explicit month mention (full name like
+   "September" or abbreviation like "Sept"/"Sep") plus an optional 4-digit
+   year sitting anywhere in the same text. Full names are checked first so
+   "January" doesn't get miscut by the "Jan" abbreviation check. Returns
+   null if no month name is found anywhere in the text. */
+function extractMonthYearFromText(text){
+  if(!text) return null;
+  const s = String(text);
+  let mi = -1;
+  for(let i=0;i<MONTHS_FULL.length;i++){ if(new RegExp('\\b'+MONTHS_FULL[i]+'\\b','i').test(s)){ mi=i; break; } }
+  if(mi<0){ for(let i=0;i<MONTHS.length;i++){ if(new RegExp('\\b'+MONTHS[i]+'\\b','i').test(s)){ mi=i; break; } } }
+  if(mi<0) return null;
+  const ym = s.match(/\b(20\d{2})\b/);
+  return { month: mi, year: ym ? parseInt(ym[1],10) : null };
+}
+
+/* Determine which month/year a transaction actually belongs to. The stored
+   `date` is sometimes just when the entry was recorded (e.g. bulk imports
+   dated the 5th of the month, or an entry logged a few days late), so
+   before trusting it this scans every free-text field on the record — note,
+   description, category — for an explicit month mention (and year, if also
+   present) that should take precedence. Falls back to the date field when
+   nothing turns up in the text. Used anywhere records need to be grouped or
+   reported "per month" for a unit. */
+function resolveEntryPeriod(entry){
+  const texts = [entry.note, entry.description, entry.category];
+  for(const t of texts){
+    const found = extractMonthYearFromText(t);
+    if(found) return { month: found.month, year: found.year!=null ? found.year : yearOf(entry.date) };
+  }
+  return { month: monthOf(entry.date), year: yearOf(entry.date) };
+}
+
 function allYears(){
   const ys = new Set();
   db.income.forEach(i=>ys.add(yearOf(i.date)));
@@ -1607,11 +1640,11 @@ function renderDashboard(c){
     </div>
     <div class="two-col">
       <div class="card">
-        <div class="card-head"><h3>Income vs. expenses</h3></div>
+        <div class="card-head"><h3>Income vs. expenses <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(all-time)</span></h3></div>
         <div class="chart-wrap"><canvas id="chart-dash-bar"></canvas></div>
       </div>
       <div class="card">
-        <div class="card-head"><h3>Portfolio breakdown</h3></div>
+        <div class="card-head"><h3>Portfolio breakdown <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(all-time)</span></h3></div>
         <div class="chart-wrap"><canvas id="chart-dash-pie"></canvas></div>
       </div>
     </div>
@@ -1639,10 +1672,15 @@ function renderDashboard(c){
   document.getElementById('dash-year').addEventListener('change', e=>{ s.year=e.target.value; renderDashboard(c); });
   document.getElementById('dash-month').addEventListener('change', e=>{ s.month=e.target.value; renderDashboard(c); });
 
-  // Monthly trend for selected year (or current year if 'all')
-  const chartYear = s.year==='all' ? new Date().getFullYear() : parseInt(s.year,10);
-  const monthlyInc = MONTHS.map((_,m)=> sum(db.income.filter(i=>yearOf(i.date)===chartYear && monthOf(i.date)===m),'amount'));
-  const monthlyExp = MONTHS.map((_,m)=> sum(db.expenses.filter(e=>yearOf(e.date)===chartYear && monthOf(e.date)===m),'amount'));
+  // "Income vs. expenses" always reflects the whole portfolio's lifetime
+  // totals — it deliberately ignores the year/month filter above (which
+  // still narrows the stat cards and the per-building table). Each calendar
+  // month's bar sums every year on record, using the scanned month (date, or
+  // a month named in the note/description/category when the date is just a
+  // recording timestamp), so a unit's actual billing month is respected
+  // rather than only the day it happened to be logged.
+  const monthlyInc = MONTHS.map((_,m)=> sum(db.income.filter(i=>resolveEntryPeriod(i).month===m),'amount'));
+  const monthlyExp = MONTHS.map((_,m)=> sum(db.expenses.filter(e=>resolveEntryPeriod(e).month===m),'amount'));
 
   destroyChart('dash-bar');
   state.charts['dash-bar'] = new Chart(document.getElementById('chart-dash-bar'), {
@@ -1651,27 +1689,30 @@ function renderDashboard(c){
       {label:'Income', data:monthlyInc, backgroundColor:'#3d7a6e', borderRadius:5},
       {label:'Expenses', data:monthlyExp, backgroundColor:'#7a2e12', borderRadius:5},
     ]},
-    options: baseChartOptions(`${chartYear} monthly totals`)
+    options: baseChartOptions(`All-time monthly totals`)
   });
 
   destroyChart('dash-pie');
-  // Portfolio breakdown: each building's share of gross income within the
-  // selected period. Recomputed from live db.income/db.buildings every
-  // render, so it updates automatically with new/edited/imported/deleted entries.
+  // Portfolio breakdown: each building's share of *lifetime* gross income —
+  // also independent of the year/month filter, per the same "overall to
+  // date" intent as the chart above. Recomputed from live db.income/
+  // db.buildings every render, so it updates automatically with
+  // new/edited/imported/deleted entries.
   const incomeByBuilding = {};
   db.buildings.forEach(b=>{
     const us = unitsOf(b.id).map(u=>u.id);
-    const bGross = sum(inc.filter(i=>us.includes(i.unitId)),'amount');
+    const bGross = sum(db.income.filter(i=>us.includes(i.unitId)),'amount');
     if(bGross>0) incomeByBuilding[b.name] = bGross;
   });
   const pbLabels = Object.keys(incomeByBuilding);
+  const allTimeGross = sum(db.income,'amount');
   state.charts['dash-pie'] = new Chart(document.getElementById('chart-dash-pie'), {
     type:'pie',
     data:{ labels: pbLabels.length?pbLabels:['No income yet'],
       datasets:[{ data: pbLabels.length?Object.values(incomeByBuilding):[1],
         backgroundColor: pbLabels.length?paletteFor(pbLabels.length):['#e7ddc9'] }] },
     options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom', labels:{boxWidth:12,font:{size:11}}},
-      tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${fmtMoney(ctx.parsed)} (${(ctx.parsed/Math.max(t.gross,1)*100).toFixed(1)}%)` } } } }
+      tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${fmtMoney(ctx.parsed)} (${(ctx.parsed/Math.max(allTimeGross,1)*100).toFixed(1)}%)` } } } }
   });
 }
 
@@ -2465,7 +2506,7 @@ function openBulkEntryForm(kind, opts){
               ${bulk.rows.map((r,i)=>`
                 <tr data-row="${r.id}">
                   <td><input type="date" data-f="date" data-i="${i}" value="${r.date}" style="width:100%"></td>
-                  <td><input type="number" step="0.01" min="0" data-f="amount" data-i="${i}" value="${escapeHtml(r.amount)}" placeholder="0.00" style="width:100%"></td>
+                  <td><input type="text" inputmode="decimal" data-f="amount" data-i="${i}" value="${escapeHtml(r.amount)}" placeholder="0.00" style="width:100%"></td>
                   ${isIncome
                     ? `<td><input type="text" data-f="note" data-i="${i}" value="${escapeHtml(r.note)}" placeholder="e.g. Airbnb payout" style="width:100%"></td>`
                     : `<td><select data-f="category" data-i="${i}" style="width:100%">${EXPENSE_CATEGORIES[bulk.type].map(cat=>`<option value="${escapeHtml(cat)}" ${cat===r.category?'selected':''}>${escapeHtml(cat)}</option>`).join('')}</select></td>
@@ -2506,7 +2547,7 @@ function openBulkEntryForm(kind, opts){
       if(!newRows.length){ toast('No usable date+amount rows found','error'); return; }
       // drop any still-blank starter rows before appending the new ones, so
       // quick-filling doesn't leave empty rows dangling above real data
-      bulk.rows = bulk.rows.filter(r=> parseFloat(r.amount)>0 || r.note || r.description);
+      bulk.rows = bulk.rows.filter(r=> parseMoneyString(r.amount)>0 || r.note || r.description);
       bulk.rows = bulk.rows.concat(newRows);
       draw();
       toast(`Added ${newRows.length} row${newRows.length===1?'':'s'}${sourceLabel?` from ${sourceLabel}`:''} — review and Save when ready`);
@@ -2566,11 +2607,14 @@ function openBulkEntryForm(kind, opts){
     document.getElementById('bulk-add-5rows').addEventListener('click', ()=>{ for(let i=0;i<5;i++) bulk.rows.push(makeRow()); draw(); focusLastAmountInput(); });
 
     document.getElementById('bulk-save-btn').addEventListener('click', ()=>{
-      const validRows = bulk.rows.filter(r=> r.date && parseFloat(r.amount)>0);
+      // parseMoneyString (not a strict parseFloat) so amounts typed or pasted
+      // with a thousands separator or a ₱/$ sign — very natural when copying
+      // straight from a spreadsheet — still count as valid.
+      const validRows = bulk.rows.filter(r=> r.date && parseMoneyString(r.amount)>0);
       if(!validRows.length){ toast('Enter at least one row with a valid amount','error'); return; }
       let count = 0;
       validRows.forEach(r=>{
-        const amount = parseFloat(r.amount);
+        const amount = Math.abs(parseMoneyString(r.amount));
         if(isIncome){
           db.income.push({id:uid(), unitId:bulk.unitId, date:r.date, amount, note:r.note||'', timestamp:new Date().toISOString()});
         } else {
@@ -2593,6 +2637,16 @@ function openBulkEntryForm(kind, opts){
 /* ============================== REPORTS ================================ */
 function renderReports(c){
   const s = state.reports;
+  // The month <select> for this period never has an "all months" option, so
+  // if s.month is still the state's default 'all' when period is 'month',
+  // the dropdown *displays* the first month (the browser's fallback for an
+  // unmatched value) while filtering logic silently keeps using 'all' —
+  // showing the whole year's totals under a UI that implies one month is
+  // selected. Normalizing here keeps the visible selection and the actual
+  // filter in sync every time this view renders, however period got set.
+  if(s.period==='month' && (s.month===undefined || s.month===null || s.month==='all')){
+    s.month = '0';
+  }
   setTopbar('Reports', 'Generate color-coded charts, export CSV, or print to PDF', `
     <button class="btn" id="export-csv-btn">${icon('download')} Export CSV</button>
     <button class="btn" id="print-pdf-btn">${icon('printer')} Print / Save PDF</button>
@@ -2655,6 +2709,36 @@ function renderReports(c){
   const t = computeTotals(inc, exp);
   const periodLabel = s.period==='all' ? 'All time' : s.period==='year' ? `Year ${s.year}` : `${MONTHS_FULL[parseInt(s.month,10)]} ${s.year}`;
 
+  // Reports are always broken down per month for the current scope, in
+  // addition to whatever period filter is selected above. This scans every
+  // record that scope has ever had — using the resolved month/year (date, or
+  // a month mentioned in the note/description/category) — so it doesn't
+  // matter whether a transaction's date field precisely matches the month it
+  // actually covers.
+  const scopeInc = db.income.filter(i=>unitIds.includes(i.unitId));
+  const scopeExp = db.expenses.filter(e=>unitIds.includes(e.unitId));
+  const monthlyMap = {};
+  const bumpMonthly = (entry, field)=>{
+    const p = resolveEntryPeriod(entry);
+    if(isNaN(p.year)) return;
+    const k = `${p.year}-${String(p.month+1).padStart(2,'0')}`;
+    if(!monthlyMap[k]) monthlyMap[k] = {year:p.year, month:p.month, inc:0, exp:0};
+    monthlyMap[k][field] += parseFloat(entry.amount)||0;
+  };
+  scopeInc.forEach(i=>bumpMonthly(i,'inc'));
+  scopeExp.forEach(e=>bumpMonthly(e,'exp'));
+  const monthlyKeys = Object.keys(monthlyMap).sort((a,b)=>b.localeCompare(a));
+  const monthlyRowsHtml = monthlyKeys.length
+    ? monthlyKeys.map(k=>{
+        const r = monthlyMap[k];
+        const net = r.inc - r.exp;
+        const margin = r.inc>0 ? (net/r.inc*100) : 0;
+        return `<tr><td>${MONTHS_FULL[r.month]} ${r.year}</td><td class="amt pos">${fmtMoney(r.inc)}</td>
+          <td class="amt neg">${fmtMoney(r.exp)}</td><td class="amt ${net>=0?'pos':'neg'}">${fmtMoney(net)}</td>
+          <td>${margin.toFixed(1)}%</td></tr>`;
+      }).join('')
+    : `<tr><td colspan="5" class="empty-state">No records for this scope.</td></tr>`;
+
   const out = document.getElementById('report-output');
   out.innerHTML = `
     <div class="grid-stats">
@@ -2688,21 +2772,40 @@ function renderReports(c){
         </table>
       </div>
     </div>
+    <div class="card">
+      <div class="card-head"><h3>Monthly breakdown — ${escapeHtml(scopeLabel)}</h3></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Month</th><th>Income</th><th>Expenses</th><th>Net</th><th>Margin</th></tr></thead>
+          <tbody>${monthlyRowsHtml}</tbody>
+        </table>
+      </div>
+    </div>
   `;
 
   destroyChart('rep-bar'); destroyChart('rep-pie');
 
   if(s.period==='month'){
-    const catInc = groupSum(inc,'note'); const catExp = groupSum(exp,'category');
+    // Header promises a "Category breakdown" for this scope; previously this
+    // branch computed catInc/catExp but never used them, and instead drew a
+    // 3-bar Income/Expenses/Net chart that just duplicated the stat cards
+    // above. Now it actually renders the expense categories for the month.
+    const catExp = groupSum(exp,'category');
+    const catKeys = Object.keys(catExp).sort((a,b)=>catExp[b]-catExp[a]);
     state.charts['rep-bar'] = new Chart(document.getElementById('chart-rep-bar'), {
-      type:'bar', data:{ labels:['Income','Expenses','Net'], datasets:[{ data:[t.gross,t.exp,t.net],
-        backgroundColor:[STRIPE_COLORS[0],STRIPE_COLORS[1],STRIPE_COLORS[2]], borderRadius:6 }]},
+      type:'bar', data:{ labels: catKeys.length?catKeys:['No expenses this month'], datasets:[{ data: catKeys.length?catKeys.map(k=>catExp[k]):[0],
+        backgroundColor: catKeys.length?paletteFor(catKeys.length):['#e7ddc9'], borderRadius:6 }]},
       options: {...baseChartOptions(), plugins:{legend:{display:false}}}
     });
   } else {
-    const yr = s.period==='year' ? parseInt(s.year,10) : new Date().getFullYear();
-    const mi = MONTHS.map((_,m)=>sum(db.income.filter(i=>unitIds.includes(i.unitId) && yearOf(i.date)===(s.period==='all'?yearOf(i.date):yr) && monthOf(i.date)===m),'amount'));
-    const me = MONTHS.map((_,m)=>sum(db.expenses.filter(e=>unitIds.includes(e.unitId) && yearOf(e.date)===(s.period==='all'?yearOf(e.date):yr) && monthOf(e.date)===m),'amount'));
+    // "Full year"/"All time" monthly comparison — grouped by each record's
+    // scanned month (date, or a month mentioned in its note/description/
+    // category), not just the raw date, so a mis-timed entry lands in the
+    // month it actually covers. When a specific year is selected, only that
+    // year's resolved records count; "All time" sums every year together.
+    const yr = s.period==='year' ? parseInt(s.year,10) : null;
+    const mi = MONTHS.map((_,m)=>sum(db.income.filter(i=>{ if(!unitIds.includes(i.unitId)) return false; const p=resolveEntryPeriod(i); return p.month===m && (yr==null || p.year===yr); }),'amount'));
+    const me = MONTHS.map((_,m)=>sum(db.expenses.filter(e=>{ if(!unitIds.includes(e.unitId)) return false; const p=resolveEntryPeriod(e); return p.month===m && (yr==null || p.year===yr); }),'amount'));
     state.charts['rep-bar'] = new Chart(document.getElementById('chart-rep-bar'), {
       type:'bar', data:{ labels:MONTHS, datasets:[
         {label:'Income', data:mi, backgroundColor:STRIPE_COLORS[0], borderRadius:5},
