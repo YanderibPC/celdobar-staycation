@@ -1491,6 +1491,13 @@ function filterByPeriod(list, year, month){
   });
 }
 
+/* Inclusive custom date-range filter for Reports. Dates are plain YYYY-MM-DD
+   strings throughout the app, so lexicographic comparison is sufficient —
+   no Date parsing/timezone drift to worry about. */
+function filterByDateRange(list, start, end){
+  return list.filter(x=> x.date && (!start || x.date>=start) && (!end || x.date<=end));
+}
+
 function sum(list, key){ return list.reduce((a,x)=>a+(parseFloat(x[key])||0),0); }
 
 function computeTotals(incomeList, expenseList){
@@ -1508,7 +1515,7 @@ const state = {
   buildings: { collapsed:{}, showHidden:false },
   expenses: { kind:'constant', building:'all', unit:'all', year:'all', month:'all' },
   income: { building:'all', unit:'all', year:'all', month:'all' },
-  reports: { scope:'total', building:'', unit:'', period:'year', year:new Date().getFullYear(), month:'all', chartsGenerated:false },
+  reports: { scope:'total', building:'', unit:'', period:'year', year:new Date().getFullYear(), month:'all', rangeStart:'', rangeEnd:'', chartsGenerated:false },
   charts: {},
 };
 
@@ -2255,6 +2262,30 @@ function projectConstantExpensesForward(){
   return created;
 }
 
+/* Whenever a constant expense is added or edited, its succeeding months need
+   to reflect whatever was just set — a corrected amount, description, or a
+   moved date shouldn't leave stale auto-projected months behind. This clears
+   out any auto-generated (auto:true) occurrences of the same unit+category
+   dated *after* the edited entry's own month, then re-runs
+   projectConstantExpensesForward() so they're regenerated from this entry's
+   current values, one per month, up through the current month. Manually
+   entered (non-auto) future occurrences are left alone — only auto-projected
+   ones are safe to regenerate. */
+function reapplyConstantExpensesForward(entry){
+  if(!entry || entry.type!=='constant') return;
+  const p = resolveEntryPeriod(entry);
+  if(p.year==null || isNaN(p.year) || p.month==null) return;
+  const rank = p.year*12 + p.month;
+  db.expenses = db.expenses.filter(e=>{
+    if(e.id===entry.id || !e.auto || e.type!=='constant') return true;
+    if(e.unitId!==entry.unitId || e.category!==entry.category) return true;
+    const ep = resolveEntryPeriod(e);
+    if(ep.year==null || isNaN(ep.year) || ep.month==null) return true;
+    return (ep.year*12+ep.month) <= rank;
+  });
+  projectConstantExpensesForward();
+}
+
 /* Look for an existing entry that matches on unit + date + amount, used to
    warn about likely duplicates when someone manually logs a new entry
    (import-time duplicate detection is handled separately in annotateDuplicates). */
@@ -2396,16 +2427,22 @@ function openExpenseForm(expense, presetKind, onDone, presetUnitId){
       // recurring bill doesn't accidentally get logged as variable.
       if(!expense && isConstantCategoryForUnit(data.unitId, data.category)) data.type = 'constant';
       const doSave = ()=>{
+        let savedEntry;
         if(expense){
           Object.assign(expense, {unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description});
+          savedEntry = expense;
           logActivity(`Updated expense "${data.category}" (${fmtMoney(amount)}).`,'update');
           toast('Expense updated');
         } else {
-          db.expenses.push({id:uid(), unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description, timestamp:new Date().toISOString()});
+          savedEntry = {id:uid(), unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description, timestamp:new Date().toISOString()};
+          db.expenses.push(savedEntry);
           logActivity(`Added ${data.type} expense "${data.category}" (${fmtMoney(amount)}).`,'create');
           toast('Expense added');
         }
-        if(data.type==='constant') projectConstantExpensesForward();
+        // Whenever the saved entry is constant, reapply it forward: this
+        // regenerates any auto-projected months after the date just set so
+        // they pick up the latest amount/description/date, not just fill gaps.
+        if(data.type==='constant') reapplyConstantExpensesForward(savedEntry);
         persist(); closeModal(); if(onDone) onDone(); else renderView();
       };
       const dup = findLikelyDuplicate(db.expenses, data.unitId, data.date, amount, expense?expense.id:null);
@@ -2921,6 +2958,14 @@ function renderReports(c){
   if(s.period==='month' && (s.month===undefined || s.month===null || s.month==='all')){
     s.month = '0';
   }
+  // Same idea for the custom range: give it sensible defaults the first time
+  // it's selected (this month-to-date), and keep start/end in chronological
+  // order no matter which date field was edited last.
+  if(s.period==='range'){
+    if(!s.rangeStart) s.rangeStart = todayISO().slice(0,8)+'01';
+    if(!s.rangeEnd) s.rangeEnd = todayISO();
+    if(s.rangeStart > s.rangeEnd){ const tmp=s.rangeStart; s.rangeStart=s.rangeEnd; s.rangeEnd=tmp; }
+  }
   setTopbar('Reports', 'Generate color-coded charts, export CSV, or print to PDF', `
     <button class="btn" id="export-csv-btn">${icon('download')} Export CSV</button>
     <button class="btn" id="print-pdf-btn">${icon('printer')} Print / Save PDF</button>
@@ -2941,9 +2986,15 @@ function renderReports(c){
           <option value="all" ${s.period==='all'?'selected':''}>All time</option>
           <option value="year" ${s.period==='year'?'selected':''}>Full year</option>
           <option value="month" ${s.period==='month'?'selected':''}>Specific month</option>
+          <option value="range" ${s.period==='range'?'selected':''}>Custom range</option>
         </select>
-        <select id="rep-year" style="${s.period==='all'?'display:none':''}">${yearOptions(false).map(o=>`<option value="${o.value}" ${parseInt(o.value)===parseInt(s.year)?'selected':''}>${o.label}</option>`).join('')}</select>
+        <select id="rep-year" style="${s.period==='all'||s.period==='range'?'display:none':''}">${yearOptions(false).map(o=>`<option value="${o.value}" ${parseInt(o.value)===parseInt(s.year)?'selected':''}>${o.label}</option>`).join('')}</select>
         <select id="rep-month" style="${s.period==='month'?'':'display:none'}">${monthOptions(false).map(o=>`<option value="${o.value}" ${o.value===s.month?'selected':''}>${o.label}</option>`).join('')}</select>
+        <span id="rep-range-wrap" style="${s.period==='range'?'':'display:none'}display:inline-flex;align-items:center;gap:6px;">
+          <input type="date" id="rep-range-start" value="${escapeHtml(s.rangeStart||'')}">
+          <span class="hint" style="margin:0;">to</span>
+          <input type="date" id="rep-range-end" value="${escapeHtml(s.rangeEnd||'')}">
+        </span>
       </div>
     </div>
     <div id="report-output"></div>
@@ -2956,6 +3007,8 @@ function renderReports(c){
     document.getElementById('rep-period').addEventListener('change', e=>{ s.period=e.target.value; s.chartsGenerated=false; renderReports(c); });
     const ry = document.getElementById('rep-year'); if(ry) ry.addEventListener('change', e=>{ s.year=e.target.value; s.chartsGenerated=false; renderReports(c); });
     const rm = document.getElementById('rep-month'); if(rm) rm.addEventListener('change', e=>{ s.month=e.target.value; s.chartsGenerated=false; renderReports(c); });
+    const rrs = document.getElementById('rep-range-start'); if(rrs) rrs.addEventListener('change', e=>{ s.rangeStart=e.target.value; s.chartsGenerated=false; renderReports(c); });
+    const rre = document.getElementById('rep-range-end'); if(rre) rre.addEventListener('change', e=>{ s.rangeEnd=e.target.value; s.chartsGenerated=false; renderReports(c); });
     document.getElementById('export-csv-btn').addEventListener('click', exportReportCsv);
     document.getElementById('print-pdf-btn').addEventListener('click', ()=>window.print());
   };
@@ -2975,13 +3028,20 @@ function renderReports(c){
     scopeLabel = getUnit(s.unit)?.name || 'Unit';
   }
 
-  let year = s.period==='all' ? 'all' : s.year;
-  let month = s.period==='month' ? s.month : 'all';
-
-  const inc = filterByPeriod(db.income.filter(i=>unitIds.includes(i.unitId)), year, month);
-  const exp = filterByPeriod(db.expenses.filter(e=>unitIds.includes(e.unitId)), year, month);
+  let inc, exp;
+  if(s.period==='range'){
+    inc = filterByDateRange(db.income.filter(i=>unitIds.includes(i.unitId)), s.rangeStart, s.rangeEnd);
+    exp = filterByDateRange(db.expenses.filter(e=>unitIds.includes(e.unitId)), s.rangeStart, s.rangeEnd);
+  } else {
+    let year = s.period==='all' ? 'all' : s.year;
+    let month = s.period==='month' ? s.month : 'all';
+    inc = filterByPeriod(db.income.filter(i=>unitIds.includes(i.unitId)), year, month);
+    exp = filterByPeriod(db.expenses.filter(e=>unitIds.includes(e.unitId)), year, month);
+  }
   const t = computeTotals(inc, exp);
-  const periodLabel = s.period==='all' ? 'All time' : s.period==='year' ? `Year ${s.year}` : `${MONTHS_FULL[parseInt(s.month,10)]} ${s.year}`;
+  const periodLabel = s.period==='all' ? 'All time' : s.period==='year' ? `Year ${s.year}`
+    : s.period==='range' ? `${fmtDate(s.rangeStart)} – ${fmtDate(s.rangeEnd)}`
+    : `${MONTHS_FULL[parseInt(s.month,10)]} ${s.year}`;
 
   // Reports are always broken down per month for the current scope, in
   // addition to whatever period filter is selected above. This scans every
@@ -3023,7 +3083,7 @@ function renderReports(c){
     </div>
     <div class="two-col">
       <div class="card">
-        <div class="card-head"><h3>${s.period==='month'?'Category breakdown':'Monthly comparison'} — ${escapeHtml(scopeLabel)}</h3></div>
+        <div class="card-head"><h3>${(s.period==='month'||s.period==='range')?'Category breakdown':'Monthly comparison'} — ${escapeHtml(scopeLabel)}</h3></div>
         <div class="chart-wrap" style="position:relative;">
           <canvas id="chart-rep-bar" style="${s.chartsGenerated?'':'display:none;'}"></canvas>
           ${s.chartsGenerated?'':`<div class="chart-generate" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;">
@@ -3097,11 +3157,12 @@ function renderReports(c){
     return;
   }
 
-  if(s.period==='month'){
+  if(s.period==='month' || s.period==='range'){
     // Header promises a "Category breakdown" for this scope; previously this
     // branch computed catInc/catExp but never used them, and instead drew a
     // 3-bar Income/Expenses/Net chart that just duplicated the stat cards
-    // above. Now it actually renders the expense categories for the month.
+    // above. Now it actually renders the expense categories for the month
+    // (or, for a custom range, the expense categories within that range).
     const catExp = groupSum(exp,'category');
     const catKeys = Object.keys(catExp).sort((a,b)=>catExp[b]-catExp[a]);
     state.charts['rep-bar'] = new Chart(document.getElementById('chart-rep-bar'), {
@@ -3154,6 +3215,28 @@ function renderReports(c){
     trendLabels = MONTHS;
     trendInc = MONTHS.map((_,m)=> sum(scopeInc.filter(i=>{ const p=resolveEntryPeriod(i); return p.year===yr && p.month===m; }),'amount'));
     trendExp = MONTHS.map((_,m)=> sum(scopeExp.filter(e=>{ const p=resolveEntryPeriod(e); return p.year===yr && p.month===m; }),'amount'));
+  } else if(s.period==='range'){
+    // A custom range rarely aligns to calendar months, so trend day-by-day
+    // using each record's raw date (not the resolved period) when the span
+    // is reasonably short; for a longer span, fall back to month-by-month
+    // buckets (using resolved period) so the chart stays readable.
+    const startD = new Date(s.rangeStart+'T00:00:00'), endD = new Date(s.rangeEnd+'T00:00:00');
+    const totalDays = Math.max(1, Math.round((endD-startD)/86400000)+1);
+    if(totalDays<=92){
+      const days = [];
+      for(let d=new Date(startD); d<=endD; d.setDate(d.getDate()+1)) days.push(d.toISOString().slice(0,10));
+      trendLabels = days.map(d=>fmtDate(d));
+      trendInc = days.map(d=> sum(inc.filter(x=>x.date===d),'amount'));
+      trendExp = days.map(d=> sum(exp.filter(x=>x.date===d),'amount'));
+    } else {
+      const months = [];
+      let y = startD.getFullYear(), m = startD.getMonth();
+      const endY = endD.getFullYear(), endM = endD.getMonth();
+      while(y<endY || (y===endY && m<=endM)){ months.push({year:y,month:m}); m++; if(m>11){ m=0; y++; } }
+      trendLabels = months.map(mo=>`${MONTHS[mo.month]} ${mo.year}`);
+      trendInc = months.map(mo=> sum(scopeInc.filter(i=>{ const p=resolveEntryPeriod(i); return p.year===mo.year && p.month===mo.month; }),'amount'));
+      trendExp = months.map(mo=> sum(scopeExp.filter(e=>{ const p=resolveEntryPeriod(e); return p.year===mo.year && p.month===mo.month; }),'amount'));
+    }
   } else {
     const years = Array.from(new Set([...scopeInc,...scopeExp].map(x=>resolveEntryPeriod(x).year).filter(y=>y!=null && !isNaN(y)))).sort((a,b)=>a-b);
     trendLabels = years.length ? years.map(String) : ['No data'];
