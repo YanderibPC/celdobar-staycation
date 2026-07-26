@@ -191,6 +191,7 @@ tbody tr:hover{background:rgba(193,80,46,.05);}
 .tag{display:inline-block;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;letter-spacing:.02em;}
 .tag.constant{background:rgba(61,122,110,.15);color:var(--teal);}
 .tag.variable{background:rgba(242,168,29,.18);color:#8a5f0e;}
+.tag.auto{background:rgba(120,120,120,.15);color:var(--ink-soft);margin-left:4px;}
 .row-actions{display:flex;gap:6px;justify-content:flex-end;}
 .empty-state{padding:40px 20px;text-align:center;color:var(--ink-soft);}
 .empty-state svg{width:38px;height:38px;opacity:.4;margin-bottom:8px;}
@@ -2079,7 +2080,7 @@ function renderUnitDetailModal(u,b,ds){
           <tbody>
           ${exp.length? exp.map(e=>`<tr>
               <td><input type="checkbox" class="ud-exp-check" data-id="${e.id}" ${ds.selected[e.id]?'checked':''}></td>
-              <td>${fmtDate(e.date)}</td><td><span class="tag ${e.type}">${e.type}</span></td>
+              <td>${fmtDate(e.date)}</td><td><span class="tag ${e.type}">${e.type}</span>${e.auto?`<span class="tag auto" title="Auto-applied from a prior month">auto</span>`:''}</td>
               <td>${escapeHtml(e.category)}</td><td>${escapeHtml(e.description||'—')}</td><td class="amt neg">${fmtMoney(e.amount)}</td>
               <td class="row-actions">
                 <button class="btn btn-sm btn-icon" data-ud-edit="${e.id}" title="Edit">${icon('edit')}</button>
@@ -2150,6 +2151,110 @@ const EXPENSE_CATEGORIES = {
   variable: ['Cleaning','Repairs','Restocking/Supplies','Guest Amenities','Platform/Booking Fees','Marketing','Other Variable'],
 };
 
+/* Detect months where a unit's usual constant (recurring) expenses appear to
+   be missing. A category only counts as "expected" for a unit once that unit
+   has actually logged it as a constant expense at least once — this avoids
+   flagging categories (e.g. Insurance, Lease) that a unit simply never uses.
+   For every period the unit has *any* activity (income or expense, using the
+   same resolveEntryPeriod logic the rest of the app uses to bucket entries
+   into months), we check whether each of the unit's expected categories has
+   a matching constant-type expense logged; anything missing is a gap.
+   Returns gaps sorted chronologically, grouped by unit within each period. */
+function auditConstantCoverage(units, yearFilter){
+  const gaps = [];
+  units.forEach(u=>{
+    const uActivity = incomeOf(u.id).concat(expensesOf(u.id));
+    const constantExpenses = expensesOf(u.id).filter(e=>e.type==='constant');
+    const expectedCategories = Array.from(new Set(constantExpenses.map(e=>e.category)));
+    if(!expectedCategories.length) return; // nothing established to audit against
+
+    const periods = new Map();
+    uActivity.forEach(entry=>{
+      const p = resolveEntryPeriod(entry);
+      if(p.year==null || isNaN(p.year) || p.month==null) return;
+      if(yearFilter!=null && yearFilter!=='all' && p.year!==parseInt(yearFilter,10)) return;
+      periods.set(`${p.year}-${p.month}`, {year:p.year, month:p.month});
+    });
+
+    const presentByPeriod = {};
+    constantExpenses.forEach(e=>{
+      const p = resolveEntryPeriod(e);
+      const key = `${p.year}-${p.month}`;
+      (presentByPeriod[key] || (presentByPeriod[key] = new Set())).add(e.category);
+    });
+
+    periods.forEach(({year,month}, key)=>{
+      const present = presentByPeriod[key] || new Set();
+      const missing = expectedCategories.filter(cat=>!present.has(cat));
+      if(missing.length) gaps.push({unitId:u.id, year, month, missing});
+    });
+  });
+  return gaps.sort((a,b)=> a.year-b.year || a.month-b.month || (getUnit(a.unitId)?.name||'').localeCompare(getUnit(b.unitId)?.name||''));
+}
+
+/* A category counts as an established "constant" (recurring) cost for a unit
+   once it's one of the app's built-in constant categories, or once that unit
+   has logged it as a constant-type expense at least once before. Used to
+   auto-apply the constant type to newly-logged entries — through manual
+   add, bulk add, and smart import — so a recurring cost never accidentally
+   slips in as variable just because someone forgot to flip the toggle. */
+function isConstantCategoryForUnit(unitId, category){
+  if(EXPENSE_CATEGORIES.constant.includes(category)) return true;
+  return db.expenses.some(e=>e.unitId===unitId && e.category===category && e.type==='constant');
+}
+
+/* Carries each unit's established recurring (constant) expenses forward
+   automatically. For every unit + category pair that's been logged as
+   constant before, this finds the most recent instance and — if the real
+   calendar has moved past that month — creates one entry per missing month
+   up through the current month, reusing the last known amount/description.
+   Runs on load and after any new constant expense is saved, so once a
+   recurring cost like "Utilities" is logged once, it keeps getting applied
+   every month going forward without manual re-entry. Auto-created entries
+   are flagged with auto:true so they stay identifiable (and remain fully
+   editable/deletable like any other entry). Skips inactive/hidden units.
+   Returns the number of entries created. */
+function projectConstantExpensesForward(){
+  const now = new Date();
+  const curKey = now.getFullYear()*12 + now.getMonth();
+  let created = 0;
+  db.units.filter(u=>u.visible!==false).forEach(u=>{
+    const constExp = expensesOf(u.id).filter(e=>e.type==='constant');
+    const latestByCategory = new Map();
+    constExp.forEach(e=>{
+      const p = resolveEntryPeriod(e);
+      if(p.year==null || isNaN(p.year) || p.month==null) return;
+      const rank = p.year*12 + p.month;
+      const existing = latestByCategory.get(e.category);
+      if(!existing || rank > existing.rank) latestByCategory.set(e.category, {entry:e, rank});
+    });
+    latestByCategory.forEach(({entry, rank}, category)=>{
+      let cursor = rank;
+      while(cursor < curKey){
+        cursor++;
+        const year = Math.floor(cursor/12), month = cursor%12;
+        const already = expensesOf(u.id).some(e=>{
+          if(e.type!=='constant' || e.category!==category) return false;
+          const p = resolveEntryPeriod(e);
+          return p.year===year && p.month===month;
+        });
+        if(!already){
+          const day = (entry.date||'').slice(8,10) || '01';
+          db.expenses.push({
+            id:uid(), unitId:u.id, type:'constant', category,
+            description: entry.description||'', amount: entry.amount,
+            date: `${year}-${String(month+1).padStart(2,'0')}-${day}`,
+            timestamp: new Date().toISOString(), auto:true
+          });
+          created++;
+        }
+      }
+    });
+  });
+  if(created) persist();
+  return created;
+}
+
 /* Look for an existing entry that matches on unit + date + amount, used to
    warn about likely duplicates when someone manually logs a new entry
    (import-time duplicate detection is handled separately in annotateDuplicates). */
@@ -2173,8 +2278,27 @@ function renderExpenses(c){
   list.sort((a,b)=> b.date.localeCompare(a.date));
 
   const totalAmt = sum(list,'amount');
+  const auditGaps = s.kind==='constant' ? auditConstantCoverage(filteredUnits, s.year) : [];
 
   c.innerHTML = `
+    ${s.kind==='constant' ? `
+    <div class="card">
+      <div class="card-head"><h3>Constant expense coverage${s.year!=='all'?` <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(${s.year})</span>`:''}</h3></div>
+      ${auditGaps.length ? `
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Month</th><th>Unit</th><th>Missing constant expense${auditGaps.some(g=>g.missing.length>1)?'s':''}</th></tr></thead>
+            <tbody>
+              ${auditGaps.map(g=>{
+                const u = getUnit(g.unitId);
+                return `<tr><td>${MONTHS[g.month]} ${g.year}</td><td>${escapeHtml(u?u.name:'—')}</td><td>${g.missing.map(m=>`<span class="tag constant">${escapeHtml(m)}</span>`).join(' ')}</td></tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : `<div class="hint">Every unit's recurring constant expenses are logged for each active month${s.year!=='all'?` in ${s.year}`:''}.</div>`}
+    </div>
+    ` : ''}
     <div class="card" style="padding-bottom:14px;">
       <div class="pill-toggle" style="margin-bottom:16px;width:max-content;">
         <button data-kind="constant" class="${s.kind==='constant'?'active':''}">Constant</button>
@@ -2199,7 +2323,7 @@ function renderExpenses(c){
           ${list.length? list.map(e=>{
             const u = getUnit(e.unitId);
             return `<tr><td><input type="checkbox" class="exp-check" data-id="${e.id}" ${s.selected[e.id]?'checked':''}></td>
-              <td>${fmtDate(e.date)}</td><td>${escapeHtml(u?u.name:'—')}</td><td>${escapeHtml(e.category)}</td>
+              <td>${fmtDate(e.date)}</td><td>${escapeHtml(u?u.name:'—')}${e.auto?`<span class="tag auto" title="Auto-applied from a prior month">auto</span>`:''}</td><td>${escapeHtml(e.category)}</td>
               <td>${escapeHtml(e.description||'—')}</td><td class="amt neg">${fmtMoney(e.amount)}</td>
               <td class="row-actions">
                 <button class="btn btn-sm btn-icon" data-edit-exp="${e.id}">${icon('edit')}</button>
@@ -2267,6 +2391,10 @@ function openExpenseForm(expense, presetKind, onDone, presetUnitId){
     onSubmit(data){
       const amount = parseFloat(data.amount);
       if(!amount || amount<=0){ toast('Enter a valid amount','error'); return; }
+      // New (not edited) entries auto-apply the constant type once this
+      // unit+category has been established as a recurring cost, so a
+      // recurring bill doesn't accidentally get logged as variable.
+      if(!expense && isConstantCategoryForUnit(data.unitId, data.category)) data.type = 'constant';
       const doSave = ()=>{
         if(expense){
           Object.assign(expense, {unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description});
@@ -2277,6 +2405,7 @@ function openExpenseForm(expense, presetKind, onDone, presetUnitId){
           logActivity(`Added ${data.type} expense "${data.category}" (${fmtMoney(amount)}).`,'create');
           toast('Expense added');
         }
+        if(data.type==='constant') projectConstantExpensesForward();
         persist(); closeModal(); if(onDone) onDone(); else renderView();
       };
       const dup = findLikelyDuplicate(db.expenses, data.unitId, data.date, amount, expense?expense.id:null);
@@ -2750,16 +2879,19 @@ function openBulkEntryForm(kind, opts){
         // be overridden per row before saving.
         const goesToExpense = isIncome ? (r.forceExpense || rawAmt<0) : true;
         if(goesToExpense && isIncome){
-          db.expenses.push({id:uid(), unitId, type:r.expType||'variable', category:r.note||'Imported', description:r.note||'Bulk add (from Income form)', date:r.date, amount, timestamp:new Date().toISOString()});
+          const autoType = isConstantCategoryForUnit(unitId, r.note||'Imported') ? 'constant' : (r.expType||'variable');
+          db.expenses.push({id:uid(), unitId, type:autoType, category:r.note||'Imported', description:r.note||'Bulk add (from Income form)', date:r.date, amount, timestamp:new Date().toISOString()});
           expenseCount++;
         } else if(isIncome){
           db.income.push({id:uid(), unitId, date:r.date, amount, note:r.note||'', timestamp:new Date().toISOString()});
           incomeCount++;
         } else {
-          db.expenses.push({id:uid(), unitId, type:bulk.type, category:r.category||'Imported', description:r.description||'', date:r.date, amount, timestamp:new Date().toISOString()});
+          const autoType = isConstantCategoryForUnit(unitId, r.category||'Imported') ? 'constant' : bulk.type;
+          db.expenses.push({id:uid(), unitId, type:autoType, category:r.category||'Imported', description:r.description||'', date:r.date, amount, timestamp:new Date().toISOString()});
           expenseCount++;
         }
       });
+      projectConstantExpensesForward();
       const count = incomeCount + expenseCount;
       const unitPhrase = touchedUnits.size>1 ? `${touchedUnits.size} units` : `unit "${getUnit([...touchedUnits][0])?.name || 'unit'}"`;
       const kindPhrase = isIncome
@@ -2912,6 +3044,16 @@ function renderReports(c){
       </div>
     </div>
     <div class="card">
+      <div class="card-head"><h3>Income vs. Expenses trend — ${escapeHtml(scopeLabel)} <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(${periodLabel})</span></h3></div>
+      <div class="chart-wrap" style="position:relative;">
+        <canvas id="chart-rep-line" style="${s.chartsGenerated?'':'display:none;'}"></canvas>
+        ${s.chartsGenerated?'':`<div class="chart-generate" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;">
+          <p class="hint" style="margin:0;">Charts aren't generated yet.</p>
+          <button class="btn btn-primary" id="rep-generate-charts-3">Generate charts</button>
+        </div>`}
+      </div>
+    </div>
+    <div class="card">
       <div class="card-head"><h3>${escapeHtml(scopeLabel)} · ${periodLabel}</h3></div>
       <div class="table-wrap">
         <table>
@@ -2937,7 +3079,7 @@ function renderReports(c){
     </div>
   `;
 
-  destroyChart('rep-bar'); destroyChart('rep-pie');
+  destroyChart('rep-bar'); destroyChart('rep-pie'); destroyChart('rep-line');
 
   window.__reportRows = [...inc.map(i=>({date:i.date,type:'Income',unit:getUnit(i.unitId)?.name||'',category:i.note||'Gross income',amount:i.amount})),
     ...exp.map(e=>({date:e.date,type:'Expense',unit:getUnit(e.unitId)?.name||'',category:e.category,amount:e.amount}))];
@@ -2951,6 +3093,7 @@ function renderReports(c){
     const gen = ()=>{ s.chartsGenerated = true; renderReports(c); };
     const g1 = document.getElementById('rep-generate-charts'); if(g1) g1.addEventListener('click', gen);
     const g2 = document.getElementById('rep-generate-charts-2'); if(g2) g2.addEventListener('click', gen);
+    const g3 = document.getElementById('rep-generate-charts-3'); if(g3) g3.addEventListener('click', gen);
     return;
   }
 
@@ -2990,6 +3133,41 @@ function renderReports(c){
     data:{ labels: catKeys.length?catKeys:['No expenses'], datasets:[{ data: catKeys.length?Object.values(expByCat):[1],
       backgroundColor: catKeys.length?paletteFor(catKeys.length):['#e7ddc9'] }]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}} }
+  });
+
+  // Income vs. Expenses trend line — granularity adapts to whatever period
+  // is selected: a specific month trends day-by-day, a full year trends
+  // month-by-month, and all time trends year-by-year (every year that has
+  // any activity for this scope). Always uses each record's *resolved*
+  // period/date so mis-timed entries still land on the day/month/year they
+  // actually cover.
+  let trendLabels, trendInc, trendExp;
+  if(s.period==='month'){
+    const yr = parseInt(s.year,10), mo = parseInt(s.month,10);
+    const daysInMonth = new Date(yr, mo+1, 0).getDate();
+    trendLabels = Array.from({length:daysInMonth}, (_,i)=>String(i+1));
+    const dayOf = (dateStr)=> parseInt((dateStr||'').slice(8,10),10);
+    trendInc = trendLabels.map((_,i)=> sum(inc.filter(x=>dayOf(x.date)===i+1),'amount'));
+    trendExp = trendLabels.map((_,i)=> sum(exp.filter(x=>dayOf(x.date)===i+1),'amount'));
+  } else if(s.period==='year'){
+    const yr = parseInt(s.year,10);
+    trendLabels = MONTHS;
+    trendInc = MONTHS.map((_,m)=> sum(scopeInc.filter(i=>{ const p=resolveEntryPeriod(i); return p.year===yr && p.month===m; }),'amount'));
+    trendExp = MONTHS.map((_,m)=> sum(scopeExp.filter(e=>{ const p=resolveEntryPeriod(e); return p.year===yr && p.month===m; }),'amount'));
+  } else {
+    const years = Array.from(new Set([...scopeInc,...scopeExp].map(x=>resolveEntryPeriod(x).year).filter(y=>y!=null && !isNaN(y)))).sort((a,b)=>a-b);
+    trendLabels = years.length ? years.map(String) : ['No data'];
+    trendInc = years.map(y=> sum(scopeInc.filter(i=>resolveEntryPeriod(i).year===y),'amount'));
+    trendExp = years.map(y=> sum(scopeExp.filter(e=>resolveEntryPeriod(e).year===y),'amount'));
+    if(!years.length){ trendInc=[0]; trendExp=[0]; }
+  }
+  state.charts['rep-line'] = new Chart(document.getElementById('chart-rep-line'), {
+    type:'line',
+    data:{ labels: trendLabels, datasets:[
+      {label:'Income', data:trendInc, borderColor:STRIPE_COLORS[0], backgroundColor:STRIPE_COLORS[0], tension:0.3, pointRadius:3},
+      {label:'Expenses', data:trendExp, borderColor:STRIPE_COLORS[1], backgroundColor:STRIPE_COLORS[1], tension:0.3, pointRadius:3},
+    ]},
+    options: baseChartOptions()
   });
 
 }
@@ -3853,10 +4031,14 @@ function renderImportPreview(rows){
         db.income.push({id:uid(), unitId, date:r.date, amount:r.amount, note:r.category, timestamp:new Date().toISOString()});
         nInc++;
       } else {
-        db.expenses.push({id:uid(), unitId, type: r.kind==='expense-constant'?'constant':'variable', category:r.category||'Imported', description:'Smart import', date:r.date, amount:r.amount, timestamp:new Date().toISOString()});
+        // A category already established as constant for this unit stays
+        // constant even if the row's own keyword match said otherwise.
+        const autoType = isConstantCategoryForUnit(unitId, r.category||'Imported') ? 'constant' : (r.kind==='expense-constant'?'constant':'variable');
+        db.expenses.push({id:uid(), unitId, type: autoType, category:r.category||'Imported', description:'Smart import', date:r.date, amount:r.amount, timestamp:new Date().toISOString()});
         nExp++;
       }
     });
+    projectConstantExpensesForward();
     logActivity(`Smart import added ${nInc} income and ${nExp} expense entries${nNewUnits?` (created ${nNewUnits} new unit${nNewUnits===1?'':'s'})`:''}${skipped?`, skipped ${skipped} likely duplicate(s)`:''}${(skippedNoUnit+nSkippedNoUnit)?`, skipped ${skippedNoUnit+nSkippedNoUnit} row(s) with no unit selected`:''}.`, 'create');
     persist(); closeModal(); toast(`Imported ${nInc+nExp} entries${nNewUnits?`, ${nNewUnits} new unit${nNewUnits===1?'':'s'} added`:''}${skipped?`, ${skipped} duplicate(s) skipped`:''}${skippedNoUnit?`, ${skippedNoUnit} row(s) without a unit skipped`:''}`); renderView();
   };
@@ -3886,6 +4068,10 @@ async function initApp(){
     }
     saveLocal();
   }
+
+  // Catch up any recurring constant expenses that should have carried
+  // forward into the current month (or any months since last opened).
+  projectConstantExpensesForward();
 
   renderShell();
   renderView();
