@@ -3426,13 +3426,18 @@ function mapWideFormatRows(rows, hint){
       if(isNaN(amt) || amt===0) return;
       const unitHeader = header[ci];
       const matched = findUnitMatch(unitHeader);
-      // A negative cell value (accounting parentheses or a minus sign) is an
-      // explicit signal from the source data itself — even on an "Income"
-      // sheet, a negative figure is a refund/deduction, not income, so it
-      // always routes to Expenses rather than being folded into the sheet's
-      // default kind.
-      let rowKind = sheetKind || 'income';
-      if(amt<0 && rowKind==='income') rowKind = 'expense-variable';
+      // Sign is the primary signal here too: a negative cell is always an
+      // expense (refund/deduction), a positive cell defaults to income —
+      // unless the sheet/tab itself explicitly names an expense kind (e.g.
+      // a tab literally called "Expenses"), which a positive figure still
+      // respects since wide pivot sheets typically store plain positive
+      // magnitudes with the kind conveyed entirely by the tab name.
+      let rowKind;
+      if(amt<0){
+        rowKind = sheetKind==='expense-constant' ? 'expense-constant' : 'expense-variable';
+      } else {
+        rowKind = sheetKind || 'income';
+      }
       out.push({
         date: rowDate,
         amount: Math.abs(amt),
@@ -3653,19 +3658,36 @@ function mapRawRows(rows, hint){
     const rawAmount = amount!=null ? parseMoneyString(amount) : NaN;
     const normAmount = isNaN(rawAmount) ? NaN : Math.abs(rawAmount);
 
-    // detect type
-    let kind = 'expense-variable';
+    // detect type — the amount's sign is the primary signal (negative =
+    // expense, positive = income), same convention as a cash-flow ledger
+    // where outflows are recorded as negative and inflows as positive.
+    // Keyword text is used to refine an expense's subtype (constant vs
+    // variable) either way, and — only for a positive amount, where the
+    // sign alone can't distinguish an expense recorded as a plain positive
+    // number (e.g. "1800, Cleaning") — to detect that it's an expense at all.
     const allText = (typeText||'')+' '+(category||'')+' '+(note||'')+' '+cells.join(' ');
-    if(/income|payout|booking|revenue|gross/i.test(allText)) kind='income';
-    else if(/constant|fixed|utilit|dues|insurance|rent|amortization|subscription/i.test(allText)) kind='expense-constant';
-    else if(/variable|clean|repair|suppl|marketing|maintenance/i.test(allText)) kind='expense-variable';
-    else if(sheetKindHint) kind = sheetKindHint;
+    const constantMatch = /constant|fixed|utilit|dues|insurance|rent|amortization|subscription/i.test(allText);
+    const variableMatch = /variable|clean|repair|suppl|marketing|maintenance/i.test(allText);
+    const incomeMatch = /income|payout|booking|revenue|gross/i.test(allText);
 
-    // An explicit negative amount (accounting parentheses or a leading/
-    // trailing minus) is a stronger, more literal signal than any keyword
-    // match — a "-1,500" next to the word "income" is a refund/deduction,
-    // not income, so it always overrides a keyword-based "income" guess.
-    if(!isNaN(rawAmount) && rawAmount<0 && kind==='income') kind = 'expense-variable';
+    let kind;
+    if(!isNaN(rawAmount) && rawAmount<0){
+      // Negative is always an expense, regardless of any "income" keyword
+      // sitting nearby (e.g. a refund/deduction listed on an income sheet).
+      kind = constantMatch ? 'expense-constant' : 'expense-variable';
+    } else if(incomeMatch){
+      kind = 'income';
+    } else if(constantMatch){
+      kind = 'expense-constant';
+    } else if(variableMatch){
+      kind = 'expense-variable';
+    } else if(sheetKindHint){
+      kind = sheetKindHint;
+    } else {
+      // Positive with no other signal at all defaults to income, mirroring
+      // the sign convention above.
+      kind = 'income';
+    }
 
     // resolve unit id against existing units ("relevant tabs")
     let unitId = null;
