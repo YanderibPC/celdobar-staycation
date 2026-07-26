@@ -2437,12 +2437,17 @@ function parseBulkQuickPasteText(raw){
 }
 
 /* Convert plain rows-of-cells (from a quick paste or a dropped file) into
-   bulk-entry row objects — {date, amount, category/note, description}. */
-function quickRowsFromCells(rows, isIncome, categoryList){
+   bulk-entry row objects — {date, amount, unitId, category/note, description}.
+   Shares the same date + unit detection heuristics as Smart Import
+   (parseFlexibleDate / findUnitMatch) so a multi-unit paste gets each row
+   routed to the right unit automatically instead of dumping everything onto
+   whichever unit happens to be selected at the top of the form. `defaultUnitId`
+   is used only as a fallback for rows where no unit could be detected. */
+function quickRowsFromCells(rows, isIncome, categoryList, defaultUnitId){
   if(!rows || !rows.length) return [];
   const dateRe = /(\d{4}-\d{1,2}-\d{1,2})|(\d{1,2}\/\d{1,2}\/\d{2,4})/;
   const moneyRe = /^\(?-?[₱$]?\s?[\d,]+(\.\d+)?\)?-?$/;
-  const headerKeywords = ['date','amount','amt','note','category','description','desc','memo'];
+  const headerKeywords = ['date','amount','amt','note','category','description','desc','memo','unit','room','property'];
 
   const firstRow = rows[0].map(x=>String(x??'').trim().toLowerCase());
   // same guard as the main import parser: a header never looks like real
@@ -2461,6 +2466,7 @@ function quickRowsFromCells(rows, isIncome, categoryList){
     firstRow.forEach((h,i)=>{
       if(/date/.test(h)) colMap.date=i;
       else if(/amount|amt/.test(h)) colMap.amount=i;
+      else if(/unit|room|property/.test(h)) colMap.unit=i;
       else if(/category|cat/.test(h)) colMap.category=i;
       else if(/note|desc|memo/.test(h)) colMap.note=i;
     });
@@ -2470,6 +2476,7 @@ function quickRowsFromCells(rows, isIncome, categoryList){
     cells = cells.map(x=>String(x??'').trim());
     let date = colMap.date!==undefined ? cells[colMap.date] : null;
     let amount = colMap.amount!==undefined ? cells[colMap.amount] : null;
+    let unitCellText = colMap.unit!==undefined ? cells[colMap.unit] : null;
     let note = colMap.note!==undefined ? cells[colMap.note] : null;
     let category = colMap.category!==undefined ? cells[colMap.category] : null;
 
@@ -2477,11 +2484,29 @@ function quickRowsFromCells(rows, isIncome, categoryList){
     if(date==null){
       cells.forEach((cell,ci)=>{ if(!date && dateRe.test(cell)){ date=cell; dateCellIdx=ci; } });
     }
+
+    // Detect a unit named anywhere in the row *before* scanning for a
+    // fallback amount — same ordering safeguard Smart Import uses, since a
+    // unit whose name is itself a plain number (e.g. "3715") would otherwise
+    // get misread as the amount.
+    let matchedUnit = null;
+    let unitCellIdx = -1;
+    if(unitCellText){
+      matchedUnit = findUnitMatch(unitCellText);
+      unitCellIdx = cells.indexOf(unitCellText);
+    } else {
+      for(let ci=0; ci<cells.length; ci++){
+        if(ci===dateCellIdx) continue;
+        const m = findUnitMatch(cells[ci]);
+        if(m){ matchedUnit = m; unitCellIdx = ci; break; }
+      }
+    }
+
     if(amount==null){
-      cells.forEach((cell,ci)=>{ if(ci===dateCellIdx) return; if(!amount && moneyRe.test(cell.replace(/\s/g,''))) amount=cell; });
+      cells.forEach((cell,ci)=>{ if(ci===dateCellIdx || ci===unitCellIdx) return; if(!amount && moneyRe.test(cell.replace(/\s/g,''))) amount=cell; });
     }
     if(note==null && category==null){
-      const rest = cells.filter((c,ci)=> ci!==dateCellIdx && c!==amount);
+      const rest = cells.filter((c,ci)=> ci!==dateCellIdx && ci!==unitCellIdx && c!==amount);
       const text = rest.find(c=>c && isNaN(parseFloat(c)));
       if(isIncome) note = text||''; else category = text||'';
     }
@@ -2494,13 +2519,24 @@ function quickRowsFromCells(rows, isIncome, categoryList){
     let cat = category || (categoryList ? categoryList[0] : '');
     if(!isIncome && categoryList && !categoryList.includes(cat)) cat = categoryList[0];
 
+    // An explicit negative amount (accounting parentheses or a leading/
+    // trailing minus) is a stronger signal than "this was pasted into the
+    // Income form" — treat it as an expense so a refund or deduction pasted
+    // alongside income rows lands in Expenses instead of inflating income.
+    const forceExpense = isIncome && rawAmt<0;
+    const kindText = (note||'')+' '+(category||'')+' '+cells.join(' ');
+    const expType = /constant|fixed|utilit|dues|insurance|rent|amortization|subscription/i.test(kindText) ? 'constant' : 'variable';
+
     return {
       id: uid(),
       date: normDate,
       amount: normAmt,
+      unitId: matchedUnit ? matchedUnit.id : (defaultUnitId || null),
       category: isIncome ? '' : cat,
       note: isIncome ? (note||'') : '',
       description: isIncome ? '' : (note||''),
+      forceExpense,
+      expType,
     };
   }).filter(Boolean);
 }
@@ -2516,7 +2552,7 @@ function openBulkEntryForm(kind, opts){
   if(db.units.length===0){ toast('Add a unit first before logging entries.','error'); return; }
   const isIncome = kind==='income';
   const bulk = {
-    unitId: opts.presetUnitId || db.units[0].id,
+    unitId: opts.presetUnitId || db.units[0].id, // default unit for newly-added blank rows
     type: opts.presetType || 'constant', // only used for expenses
     rows: [],
   };
@@ -2524,9 +2560,12 @@ function openBulkEntryForm(kind, opts){
     id: uid(),
     date: todayISO(),
     amount: '',
+    unitId: bulk.unitId,
     category: isIncome ? '' : EXPENSE_CATEGORIES[bulk.type][0],
     description: '',
     note: '',
+    forceExpense: false, // income rows only: flips this row to Expenses on save
+    expType: 'variable', // income rows only: expense type used if forceExpense
   });
   const startRows = opts.rowCount || 5;
   for(let i=0;i<startRows;i++) bulk.rows.push(makeRow());
@@ -2540,20 +2579,20 @@ function openBulkEntryForm(kind, opts){
 
   function draw(){
     const unitOpts = unitOptions(false).map(o=>`<option value="${o.value}" ${o.value===bulk.unitId?'selected':''}>${o.label}</option>`).join('');
-    const catOpts = isIncome ? '' : EXPENSE_CATEGORIES[bulk.type].map(cat=>`<option value="${escapeHtml(cat)}">${escapeHtml(cat)}</option>`).join('');
+    const rowUnitOpts = (selId)=> unitOptions(false).map(o=>`<option value="${o.value}" ${o.value===selId?'selected':''}>${o.label}</option>`).join('');
 
     openModal(`
       <div class="modal-head"><h3>Bulk add ${isIncome?'income':'expenses'}</h3><button class="modal-close" onclick="closeModal()">${icon('close')}</button></div>
       <div class="modal-body">
         <div class="field-row">
-          <div class="field" style="flex:1;"><label>Unit</label><select id="bulk-unit" style="width:100%">${unitOpts}</select></div>
+          <div class="field" style="flex:1;"><label>Default unit</label><select id="bulk-unit" style="width:100%">${unitOpts}</select></div>
           ${isIncome ? '' : `<div class="field" style="flex:1;"><label>Type</label>
             <select id="bulk-type" style="width:100%">
               <option value="constant" ${bulk.type==='constant'?'selected':''}>Constant</option>
               <option value="variable" ${bulk.type==='variable'?'selected':''}>Variable</option>
             </select></div>`}
         </div>
-        <p class="hint" style="margin-top:0;">All rows below are logged against the same unit${isIncome?'':' and type'}. Blank rows (no amount) are ignored automatically, so it's fine to leave extras empty.</p>
+        <p class="hint" style="margin-top:0;">New rows start out on this unit${isIncome?'':' and type'}, but each row below has its own Unit column, and pasted/dropped data that names a different unit is routed there automatically. Blank rows (no amount) are ignored automatically, so it's fine to leave extras empty.</p>
 
         <div class="import-file-drop" id="bulk-file-drop" style="padding:14px 16px;">
           ${icon('upload')}
@@ -2566,14 +2605,15 @@ function openBulkEntryForm(kind, opts){
           <textarea id="bulk-paste-text" placeholder="${isIncome ? '2026-05-05, 28000, Airbnb payout' : '2026-05-03, 1800, Cleaning'}&#10;2026-05-14, 1800, ..." style="width:100%;min-height:70px;flex:1;"></textarea>
           <button type="button" class="btn btn-sm" id="bulk-paste-fill" style="white-space:nowrap;">${icon('upload')} Fill rows</button>
         </div>
-        <p class="hint" style="margin-top:6px;">Each line becomes a row here — date + amount ${isIncome?'+ note':'+ category'} — so you can still tweak anything before saving. This doesn't ask which unit each row belongs to, since that's already set above.</p>
+        <p class="hint" style="margin-top:6px;">Each line becomes a row here — date, unit (if mentioned), and amount ${isIncome?'+ note':'+ category'} — so you can still tweak anything before saving.${isIncome ? ' A negative amount (e.g. "-1500" or "(1500)") is treated as an expense and routed to Expenses instead of Income.' : ''}</p>
 
         <div class="divider"></div>
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th style="width:140px;">Date</th><th style="width:130px;">Amount (₱)</th>
-              ${isIncome ? '<th>Note / source</th>' : '<th style="width:190px;">Category</th><th>Description</th>'}
+              <th style="width:130px;">Date</th><th style="width:110px;">Amount (₱)</th>
+              <th style="width:170px;">Unit</th>
+              ${isIncome ? '<th style="width:130px;">Type</th><th>Note / source</th>' : '<th style="width:170px;">Category</th><th>Description</th>'}
               <th style="width:36px;"></th>
             </tr></thead>
             <tbody id="bulk-rows-body">
@@ -2581,8 +2621,13 @@ function openBulkEntryForm(kind, opts){
                 <tr data-row="${r.id}">
                   <td><input type="date" data-f="date" data-i="${i}" value="${r.date}" style="width:100%"></td>
                   <td><input type="text" inputmode="decimal" data-f="amount" data-i="${i}" value="${escapeHtml(r.amount)}" placeholder="0.00" style="width:100%"></td>
+                  <td><select data-f="unitId" data-i="${i}" style="width:100%">${rowUnitOpts(r.unitId)}</select></td>
                   ${isIncome
-                    ? `<td><input type="text" data-f="note" data-i="${i}" value="${escapeHtml(r.note)}" placeholder="e.g. Airbnb payout" style="width:100%"></td>`
+                    ? `<td><select data-f="forceExpense" data-i="${i}" style="width:100%">
+                         <option value="false" ${!r.forceExpense?'selected':''}>Income</option>
+                         <option value="true" ${r.forceExpense?'selected':''}>Expense</option>
+                       </select></td>
+                       <td><input type="text" data-f="note" data-i="${i}" value="${escapeHtml(r.note)}" placeholder="e.g. Airbnb payout" style="width:100%"></td>`
                     : `<td><select data-f="category" data-i="${i}" style="width:100%">${EXPENSE_CATEGORIES[bulk.type].map(cat=>`<option value="${escapeHtml(cat)}" ${cat===r.category?'selected':''}>${escapeHtml(cat)}</option>`).join('')}</select></td>
                        <td><input type="text" data-f="description" data-i="${i}" value="${escapeHtml(r.description)}" placeholder="Optional" style="width:100%"></td>`
                   }
@@ -2624,7 +2669,8 @@ function openBulkEntryForm(kind, opts){
       bulk.rows = bulk.rows.filter(r=> parseMoneyString(r.amount)>0 || r.note || r.description);
       bulk.rows = bulk.rows.concat(newRows);
       draw();
-      toast(`Added ${newRows.length} row${newRows.length===1?'':'s'}${sourceLabel?` from ${sourceLabel}`:''} — review and Save when ready`);
+      const expenseCount = isIncome ? newRows.filter(r=>r.forceExpense).length : 0;
+      toast(`Added ${newRows.length} row${newRows.length===1?'':'s'}${sourceLabel?` from ${sourceLabel}`:''}${expenseCount?`, ${expenseCount} flagged as expense (negative amount)`:''} — review and Save when ready`);
     }
     function handleBulkFile(file){
       if(!file) return;
@@ -2643,7 +2689,7 @@ function openBulkEntryForm(kind, opts){
             rows = parsed.data;
           }
           rows = (rows||[]).filter(r=>r && r.length && r.join('').trim());
-          ingestQuickRows(quickRowsFromCells(rows, isIncome, catList), file.name);
+          ingestQuickRows(quickRowsFromCells(rows, isIncome, catList, bulk.unitId), file.name);
         }catch(err){
           console.warn('bulk quick-fill file parse failed', err);
           toast('Could not parse that file — try .csv, .tsv, or .xlsx','error');
@@ -2663,11 +2709,15 @@ function openBulkEntryForm(kind, opts){
       const raw = document.getElementById('bulk-paste-text').value;
       if(!raw.trim()){ toast('Paste some rows first','error'); return; }
       const cells = parseBulkQuickPasteText(raw);
-      ingestQuickRows(quickRowsFromCells(cells, isIncome, catList));
+      ingestQuickRows(quickRowsFromCells(cells, isIncome, catList, bulk.unitId));
     });
 
     document.querySelectorAll('#bulk-rows-body input, #bulk-rows-body select').forEach(el=>{
-      const commit = e=>{ bulk.rows[+el.dataset.i][el.dataset.f] = e.target.value; };
+      const commit = e=>{
+        const f = el.dataset.f;
+        if(f==='forceExpense'){ bulk.rows[+el.dataset.i][f] = e.target.value==='true'; return; }
+        bulk.rows[+el.dataset.i][f] = e.target.value;
+      };
       el.addEventListener('input', commit);
       el.addEventListener('change', commit);
     });
@@ -2682,25 +2732,43 @@ function openBulkEntryForm(kind, opts){
 
     document.getElementById('bulk-save-btn').addEventListener('click', ()=>{
       // parseMoneyString (not a strict parseFloat) so amounts typed or pasted
-      // with a thousands separator or a ₱/$ sign — very natural when copying
-      // straight from a spreadsheet — still count as valid.
-      const validRows = bulk.rows.filter(r=> r.date && parseMoneyString(r.amount)>0);
+      // with a thousands separator, a ₱/$ sign, or a negative sign — very
+      // natural when copying straight from a spreadsheet — still count as
+      // valid (a negative amount is still a valid row, just routed below).
+      const validRows = bulk.rows.filter(r=> r.date && !isNaN(parseMoneyString(r.amount)) && parseMoneyString(r.amount)!==0);
       if(!validRows.length){ toast('Enter at least one row with a valid amount','error'); return; }
-      let count = 0;
+      let incomeCount = 0, expenseCount = 0;
+      const touchedUnits = new Set();
       validRows.forEach(r=>{
-        const amount = Math.abs(parseMoneyString(r.amount));
-        if(isIncome){
-          db.income.push({id:uid(), unitId:bulk.unitId, date:r.date, amount, note:r.note||'', timestamp:new Date().toISOString()});
+        const rawAmt = parseMoneyString(r.amount);
+        const amount = Math.abs(rawAmt);
+        const unitId = r.unitId || bulk.unitId;
+        touchedUnits.add(unitId);
+        // A negative amount on an Income row (either typed directly or
+        // detected from a paste/file) is routed to Expenses instead — see
+        // the "Type" column, which quick-fill pre-sets but which can still
+        // be overridden per row before saving.
+        const goesToExpense = isIncome ? (r.forceExpense || rawAmt<0) : true;
+        if(goesToExpense && isIncome){
+          db.expenses.push({id:uid(), unitId, type:r.expType||'variable', category:r.note||'Imported', description:r.note||'Bulk add (from Income form)', date:r.date, amount, timestamp:new Date().toISOString()});
+          expenseCount++;
+        } else if(isIncome){
+          db.income.push({id:uid(), unitId, date:r.date, amount, note:r.note||'', timestamp:new Date().toISOString()});
+          incomeCount++;
         } else {
-          db.expenses.push({id:uid(), unitId:bulk.unitId, type:bulk.type, category:r.category||'Imported', description:r.description||'', date:r.date, amount, timestamp:new Date().toISOString()});
+          db.expenses.push({id:uid(), unitId, type:bulk.type, category:r.category||'Imported', description:r.description||'', date:r.date, amount, timestamp:new Date().toISOString()});
+          expenseCount++;
         }
-        count++;
       });
-      const unitName = getUnit(bulk.unitId)?.name || 'unit';
-      logActivity(`Bulk added ${count} ${isIncome?'income':bulk.type+' expense'} entr${count===1?'y':'ies'} for unit "${unitName}".`, 'create');
+      const count = incomeCount + expenseCount;
+      const unitPhrase = touchedUnits.size>1 ? `${touchedUnits.size} units` : `unit "${getUnit([...touchedUnits][0])?.name || 'unit'}"`;
+      const kindPhrase = isIncome
+        ? (expenseCount ? `${incomeCount} income and ${expenseCount} expense entr${count===1?'y':'ies'} (negative amounts routed to expenses)` : `${incomeCount} income entr${incomeCount===1?'y':'ies'}`)
+        : `${expenseCount} ${bulk.type} expense entr${expenseCount===1?'y':'ies'}`;
+      logActivity(`Bulk added ${kindPhrase} for ${unitPhrase}.`, 'create');
       persist();
       closeModal();
-      toast(`Added ${count} ${isIncome?'income':'expense'} entr${count===1?'y':'ies'}`);
+      toast(`Added ${count} entr${count===1?'y':'ies'}`);
       if(opts.onDone) opts.onDone(); else renderView();
     });
   }
@@ -3358,6 +3426,13 @@ function mapWideFormatRows(rows, hint){
       if(isNaN(amt) || amt===0) return;
       const unitHeader = header[ci];
       const matched = findUnitMatch(unitHeader);
+      // A negative cell value (accounting parentheses or a minus sign) is an
+      // explicit signal from the source data itself — even on an "Income"
+      // sheet, a negative figure is a refund/deduction, not income, so it
+      // always routes to Expenses rather than being folded into the sheet's
+      // default kind.
+      let rowKind = sheetKind || 'income';
+      if(amt<0 && rowKind==='income') rowKind = 'expense-variable';
       out.push({
         date: rowDate,
         amount: Math.abs(amt),
@@ -3368,7 +3443,7 @@ function mapWideFormatRows(rows, hint){
         noUnitDetected: false,
         category: 'Imported',
         note: 'Imported (monthly summary)',
-        kind: sheetKind || 'income',
+        kind: rowKind,
         raw: `${label} — ${unitHeader}: ${raw}`
       });
     });
@@ -3585,6 +3660,12 @@ function mapRawRows(rows, hint){
     else if(/constant|fixed|utilit|dues|insurance|rent|amortization|subscription/i.test(allText)) kind='expense-constant';
     else if(/variable|clean|repair|suppl|marketing|maintenance/i.test(allText)) kind='expense-variable';
     else if(sheetKindHint) kind = sheetKindHint;
+
+    // An explicit negative amount (accounting parentheses or a leading/
+    // trailing minus) is a stronger, more literal signal than any keyword
+    // match — a "-1,500" next to the word "income" is a refund/deduction,
+    // not income, so it always overrides a keyword-based "income" guess.
+    if(!isNaN(rawAmount) && rawAmount<0 && kind==='income') kind = 'expense-variable';
 
     // resolve unit id against existing units ("relevant tabs")
     let unitId = null;
