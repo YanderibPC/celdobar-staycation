@@ -1513,9 +1513,9 @@ const state = {
   view: 'dashboard',
   dashboard: { year:'all', month:'all', chartsGenerated:false },
   buildings: { collapsed:{}, showHidden:false },
-  expenses: { kind:'constant', building:'all', unit:'all', year:'all', month:'all' },
+  expenses: { kind:'constant', building:'all', unit:'all', year:'all', month:'all', category:'all' },
   income: { building:'all', unit:'all', year:'all', month:'all' },
-  reports: { scope:'total', building:'', unit:'', period:'year', year:new Date().getFullYear(), month:'all', rangeStart:'', rangeEnd:'', chartsGenerated:false },
+  reports: { scope:'total', building:'', unit:'', period:'year', year:new Date().getFullYear(), month:'all', rangeStart:'', rangeEnd:'', trendRange:{enabled:false, start:'', end:''}, chartsGenerated:false },
   charts: {},
 };
 
@@ -1666,6 +1666,10 @@ function yearOptions(includeAll){
 function monthOptions(includeAll){
   const ms = MONTHS_FULL.map((m,i)=>({value:String(i),label:m}));
   return includeAll ? [{value:'all',label:'All months'}, ...ms] : ms;
+}
+function categoryOptions(kind, includeAll){
+  const cats = (EXPENSE_CATEGORIES[kind]||[]).map(c=>({value:c,label:c}));
+  return includeAll ? [{value:'all',label:'All categories'}, ...cats] : cats;
 }
 
 /* ============================== DASHBOARD ================================ */
@@ -2154,8 +2158,8 @@ function c_ud_wire_rows(u,b,ds){
 
 /* ============================== EXPENSES ================================ */
 const EXPENSE_CATEGORIES = {
-  constant: ['Utilities','Association Dues','Insurance','Subscriptions (Wi-fi/Streaming)','Property Management Fee','Loan/Amortization','Lease','Other Constant'],
-  variable: ['Cleaning','Repairs','Restocking/Supplies','Guest Amenities','Platform/Booking Fees','Marketing','Other Variable'],
+  constant: ['Subscriptions (Wi-fi/Streaming)','Lease'],
+  variable: ['Utilities','Association Dues','Insurance','Property Management Fee','Loan/Amortization','Other Constant','Cleaning','Repairs','Restocking/Supplies','Guest Amenities','Platform/Booking Fees','Marketing','Other Variable'],
 };
 
 /* Detect months where a unit's usual constant (recurring) expenses appear to
@@ -2199,15 +2203,16 @@ function auditConstantCoverage(units, yearFilter){
   return gaps.sort((a,b)=> a.year-b.year || a.month-b.month || (getUnit(a.unitId)?.name||'').localeCompare(getUnit(b.unitId)?.name||''));
 }
 
-/* A category counts as an established "constant" (recurring) cost for a unit
-   once it's one of the app's built-in constant categories, or once that unit
-   has logged it as a constant-type expense at least once before. Used to
+/* Only "Subscriptions (Wi-fi/Streaming)" and "Lease" are treated as constant
+   (recurring) categories — every other expense category is variable. Used to
    auto-apply the constant type to newly-logged entries — through manual
-   add, bulk add, and smart import — so a recurring cost never accidentally
-   slips in as variable just because someone forgot to flip the toggle. */
+   add, bulk add, and smart import — so these two recurring costs never
+   accidentally get logged as variable just because someone forgot to flip
+   the toggle. This is a strict rule based purely on category name; it no
+   longer grandfathers in other categories just because a unit happened to
+   log them as constant in the past. */
 function isConstantCategoryForUnit(unitId, category){
-  if(EXPENSE_CATEGORIES.constant.includes(category)) return true;
-  return db.expenses.some(e=>e.unitId===unitId && e.category===category && e.type==='constant');
+  return EXPENSE_CATEGORIES.constant.includes(category);
 }
 
 /* Carries each unit's established recurring (constant) expenses forward
@@ -2296,6 +2301,8 @@ function findLikelyDuplicate(list, unitId, date, amount, excludeId){
 function renderExpenses(c){
   const s = state.expenses;
   s.selected = s.selected || {};
+  if(!s.category) s.category = 'all';
+  if(s.category!=='all' && !EXPENSE_CATEGORIES[s.kind].includes(s.category)) s.category = 'all';
   setTopbar('Expenses', 'Track constant and variable costs, itemized per unit', `
     <button class="btn btn-danger" id="bulk-del-exp-btn" style="display:none;">${icon('trash')} Delete selected</button>
     <button class="btn" id="bulk-add-exp-btn">${icon('plus')} Bulk add</button>
@@ -2305,6 +2312,7 @@ function renderExpenses(c){
   const filteredUnits = s.building==='all' ? db.units : db.units.filter(u=>u.buildingId===s.building);
   let list = db.expenses.filter(e=> e.type===s.kind && filteredUnits.some(u=>u.id===e.unitId));
   if(s.unit!=='all') list = list.filter(e=>e.unitId===s.unit);
+  if(s.category && s.category!=='all') list = list.filter(e=>e.category===s.category);
   list = filterByPeriod(list, s.year, s.month);
   list.sort((a,b)=> b.date.localeCompare(a.date));
 
@@ -2338,6 +2346,7 @@ function renderExpenses(c){
       <div class="filters">
         <select id="exp-building">${buildingOptions(true).map(o=>`<option value="${o.value}" ${o.value===s.building?'selected':''}>${o.label}</option>`).join('')}</select>
         <select id="exp-unit">${unitOptions(true).map(o=>`<option value="${o.value}" ${o.value===s.unit?'selected':''}>${o.label}</option>`).join('')}</select>
+        <select id="exp-category">${categoryOptions(s.kind, true).map(o=>`<option value="${escapeHtml(o.value)}" ${o.value===s.category?'selected':''}>${escapeHtml(o.label)}</option>`).join('')}</select>
         <select id="exp-year">${yearOptions(true).map(o=>`<option value="${o.value}" ${o.value===s.year?'selected':''}>${o.label}</option>`).join('')}</select>
         <select id="exp-month">${monthOptions(true).map(o=>`<option value="${o.value}" ${o.value===s.month?'selected':''}>${o.label}</option>`).join('')}</select>
         <span class="hint" style="margin-left:auto;">${list.length} entries · Total <strong class="amt neg">${fmtMoney(totalAmt)}</strong></span>
@@ -2367,9 +2376,10 @@ function renderExpenses(c){
     </div>
   `;
 
-  c.querySelectorAll('[data-kind]').forEach(b=>b.addEventListener('click',()=>{ s.kind=b.dataset.kind; renderExpenses(c); }));
+  c.querySelectorAll('[data-kind]').forEach(b=>b.addEventListener('click',()=>{ s.kind=b.dataset.kind; s.category='all'; renderExpenses(c); }));
   document.getElementById('exp-building').addEventListener('change', e=>{ s.building=e.target.value; s.unit='all'; renderExpenses(c); });
   document.getElementById('exp-unit').addEventListener('change', e=>{ s.unit=e.target.value; renderExpenses(c); });
+  document.getElementById('exp-category').addEventListener('change', e=>{ s.category=e.target.value; renderExpenses(c); });
   document.getElementById('exp-year').addEventListener('change', e=>{ s.year=e.target.value; renderExpenses(c); });
   document.getElementById('exp-month').addEventListener('change', e=>{ s.month=e.target.value; renderExpenses(c); });
   document.getElementById('add-expense-btn').addEventListener('click', ()=>openExpenseForm(null, s.kind, ()=>renderExpenses(c)));
@@ -2966,6 +2976,13 @@ function renderReports(c){
     if(!s.rangeEnd) s.rangeEnd = todayISO();
     if(s.rangeStart > s.rangeEnd){ const tmp=s.rangeStart; s.rangeStart=s.rangeEnd; s.rangeEnd=tmp; }
   }
+  if(!s.trendRange) s.trendRange = {enabled:false, start:'', end:''};
+  if(s.trendRange.enabled){
+    if(!s.trendRange.start) s.trendRange.start = todayISO().slice(0,8)+'01';
+    if(!s.trendRange.end) s.trendRange.end = todayISO();
+    if(s.trendRange.start > s.trendRange.end){ const tmp=s.trendRange.start; s.trendRange.start=s.trendRange.end; s.trendRange.end=tmp; }
+  }
+  if(s.isolatedChart===undefined) s.isolatedChart = null;
   setTopbar('Reports', 'Generate color-coded charts, export CSV, or print to PDF', `
     <button class="btn" id="export-csv-btn">${icon('download')} Export CSV</button>
     <button class="btn" id="print-pdf-btn">${icon('printer')} Print / Save PDF</button>
@@ -3043,6 +3060,19 @@ function renderReports(c){
     : s.period==='range' ? `${fmtDate(s.rangeStart)} – ${fmtDate(s.rangeEnd)}`
     : `${MONTHS_FULL[parseInt(s.month,10)]} ${s.year}`;
 
+  // The trend chart can be limited to its own date range, independent of the
+  // scope/period filters above (e.g. keep the stat cards on "Full year" while
+  // zooming the trend line into one particular stretch of it).
+  const trendRangeActive = !!(s.trendRange.enabled && s.trendRange.start && s.trendRange.end);
+  const trendPeriodLabel = trendRangeActive ? `${fmtDate(s.trendRange.start)} – ${fmtDate(s.trendRange.end)}` : periodLabel;
+  const isolate = s.isolatedChart; // null | 'bar' | 'pie' | 'line'
+  const showBar = !isolate || isolate==='bar';
+  const showPie = !isolate || isolate==='pie';
+  const showLine = !isolate || isolate==='line';
+  const isolateBtn = (key)=> isolate===key
+    ? `<button class="btn" data-show-all style="padding:3px 10px;font-size:11px;">Show all charts</button>`
+    : `<button class="btn" data-isolate="${key}" style="padding:3px 10px;font-size:11px;">⛶ Isolate</button>`;
+
   // Reports are always broken down per month for the current scope, in
   // addition to whatever period filter is selected above. This scans every
   // record that scope has ever had — using the resolved month/year (date, or
@@ -3081,9 +3111,12 @@ function renderReports(c){
       <div class="stat-card net"><div class="label">Net Income</div><div class="value">${fmtMoney(t.net)}</div></div>
       <div class="stat-card margin"><div class="label">Margin</div><div class="value">${t.margin.toFixed(1)}%</div></div>
     </div>
-    <div class="two-col">
-      <div class="card">
-        <div class="card-head"><h3>${(s.period==='month'||s.period==='range')?'Category breakdown':'Monthly comparison'} — ${escapeHtml(scopeLabel)}</h3></div>
+    ${(showBar||showPie) ? `<div class="two-col" style="${isolate?'grid-template-columns:1fr;':''}">
+      ${showBar? `<div class="card">
+        <div class="card-head" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+          <h3>${(s.period==='month'||s.period==='range')?'Category breakdown':'Monthly comparison'} — ${escapeHtml(scopeLabel)}</h3>
+          ${isolateBtn('bar')}
+        </div>
         <div class="chart-wrap" style="position:relative;">
           <canvas id="chart-rep-bar" style="${s.chartsGenerated?'':'display:none;'}"></canvas>
           ${s.chartsGenerated?'':`<div class="chart-generate" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;">
@@ -3091,9 +3124,12 @@ function renderReports(c){
             <button class="btn btn-primary" id="rep-generate-charts">Generate charts</button>
           </div>`}
         </div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h3>Expense categories</h3></div>
+      </div>` : ''}
+      ${showPie? `<div class="card">
+        <div class="card-head" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+          <h3>Expense categories</h3>
+          ${isolateBtn('pie')}
+        </div>
         <div class="chart-wrap" style="position:relative;">
           <canvas id="chart-rep-pie" style="${s.chartsGenerated?'':'display:none;'}"></canvas>
           ${s.chartsGenerated?'':`<div class="chart-generate" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;">
@@ -3101,10 +3137,23 @@ function renderReports(c){
             <button class="btn btn-primary" id="rep-generate-charts-2">Generate charts</button>
           </div>`}
         </div>
+      </div>` : ''}
+    </div>` : ''}
+    ${showLine ? `<div class="card">
+      <div class="card-head" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <h3>Income vs. Expenses trend — ${escapeHtml(scopeLabel)} <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(${trendPeriodLabel})</span></h3>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-soft);cursor:pointer;">
+            <input type="checkbox" id="trend-range-toggle" ${s.trendRange.enabled?'checked':''}> Limit this chart to a range
+          </label>
+          <span id="trend-range-inputs" style="display:${s.trendRange.enabled?'inline-flex':'none'};align-items:center;gap:6px;">
+            <input type="date" id="trend-range-start" value="${escapeHtml(s.trendRange.start||'')}">
+            <span class="hint" style="margin:0;">to</span>
+            <input type="date" id="trend-range-end" value="${escapeHtml(s.trendRange.end||'')}">
+          </span>
+          ${isolateBtn('line')}
+        </div>
       </div>
-    </div>
-    <div class="card">
-      <div class="card-head"><h3>Income vs. Expenses trend — ${escapeHtml(scopeLabel)} <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(${periodLabel})</span></h3></div>
       <div class="chart-wrap" style="position:relative;">
         <canvas id="chart-rep-line" style="${s.chartsGenerated?'':'display:none;'}"></canvas>
         ${s.chartsGenerated?'':`<div class="chart-generate" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;">
@@ -3112,7 +3161,7 @@ function renderReports(c){
           <button class="btn btn-primary" id="rep-generate-charts-3">Generate charts</button>
         </div>`}
       </div>
-    </div>
+    </div>` : ''}
     <div class="card">
       <div class="card-head"><h3>${escapeHtml(scopeLabel)} · ${periodLabel}</h3></div>
       <div class="table-wrap">
@@ -3141,6 +3190,30 @@ function renderReports(c){
 
   destroyChart('rep-bar'); destroyChart('rep-pie'); destroyChart('rep-line');
 
+  // Isolate / show-all — lets the person focus on one chart at a time
+  // without losing their scope/period selections above.
+  document.querySelectorAll('[data-isolate]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ s.isolatedChart = btn.dataset.isolate; renderReports(c); });
+  });
+  const showAllBtn = document.querySelector('[data-show-all]');
+  if(showAllBtn) showAllBtn.addEventListener('click', ()=>{ s.isolatedChart = null; renderReports(c); });
+
+  // The trend chart's own, independent date-range toggle — separate from
+  // the report-wide scope/period filters above.
+  const trToggle = document.getElementById('trend-range-toggle');
+  if(trToggle) trToggle.addEventListener('change', e=>{
+    s.trendRange.enabled = e.target.checked;
+    if(s.trendRange.enabled){
+      if(!s.trendRange.start) s.trendRange.start = todayISO().slice(0,8)+'01';
+      if(!s.trendRange.end) s.trendRange.end = todayISO();
+    }
+    renderReports(c);
+  });
+  const trStart = document.getElementById('trend-range-start');
+  if(trStart) trStart.addEventListener('change', e=>{ s.trendRange.start = e.target.value; renderReports(c); });
+  const trEnd = document.getElementById('trend-range-end');
+  if(trEnd) trEnd.addEventListener('change', e=>{ s.trendRange.end = e.target.value; renderReports(c); });
+
   window.__reportRows = [...inc.map(i=>({date:i.date,type:'Income',unit:getUnit(i.unitId)?.name||'',category:i.note||'Gross income',amount:i.amount})),
     ...exp.map(e=>({date:e.date,type:'Expense',unit:getUnit(e.unitId)?.name||'',category:e.category,amount:e.amount}))];
 
@@ -3157,6 +3230,7 @@ function renderReports(c){
     return;
   }
 
+  if(showBar) {
   if(s.period==='month' || s.period==='range'){
     // Header promises a "Category breakdown" for this scope; previously this
     // branch computed catInc/catExp but never used them, and instead drew a
@@ -3186,7 +3260,9 @@ function renderReports(c){
       ]}, options: baseChartOptions()
     });
   }
+  }
 
+  if(showPie) {
   const expByCat = groupSum(exp,'category');
   const catKeys = Object.keys(expByCat);
   state.charts['rep-pie'] = new Chart(document.getElementById('chart-rep-pie'), {
@@ -3195,15 +3271,42 @@ function renderReports(c){
       backgroundColor: catKeys.length?paletteFor(catKeys.length):['#e7ddc9'] }]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}} }
   });
+  }
 
+  if(showLine) {
   // Income vs. Expenses trend line — granularity adapts to whatever period
   // is selected: a specific month trends day-by-day, a full year trends
   // month-by-month, and all time trends year-by-year (every year that has
   // any activity for this scope). Always uses each record's *resolved*
   // period/date so mis-timed entries still land on the day/month/year they
-  // actually cover.
+  // actually cover. If the trend chart's own "limit to range" toggle is on,
+  // that takes priority over all of the above and drives the trend chart
+  // independently of the report-wide period selection.
   let trendLabels, trendInc, trendExp;
-  if(s.period==='month'){
+  if(trendRangeActive){
+    // Same day-vs-month granularity rule as the report-wide custom range,
+    // but scoped to this chart's own start/end and using the raw date
+    // (not the resolved period) for accuracy on short spans.
+    const rangedInc = filterByDateRange(scopeInc, s.trendRange.start, s.trendRange.end);
+    const rangedExp = filterByDateRange(scopeExp, s.trendRange.start, s.trendRange.end);
+    const startD = new Date(s.trendRange.start+'T00:00:00'), endD = new Date(s.trendRange.end+'T00:00:00');
+    const totalDays = Math.max(1, Math.round((endD-startD)/86400000)+1);
+    if(totalDays<=92){
+      const days = [];
+      for(let d=new Date(startD); d<=endD; d.setDate(d.getDate()+1)) days.push(d.toISOString().slice(0,10));
+      trendLabels = days.map(d=>fmtDate(d));
+      trendInc = days.map(d=> sum(rangedInc.filter(x=>x.date===d),'amount'));
+      trendExp = days.map(d=> sum(rangedExp.filter(x=>x.date===d),'amount'));
+    } else {
+      const months = [];
+      let y = startD.getFullYear(), m = startD.getMonth();
+      const endY = endD.getFullYear(), endM = endD.getMonth();
+      while(y<endY || (y===endY && m<=endM)){ months.push({year:y,month:m}); m++; if(m>11){ m=0; y++; } }
+      trendLabels = months.map(mo=>`${MONTHS[mo.month]} ${mo.year}`);
+      trendInc = months.map(mo=> sum(rangedInc.filter(x=>{ const p=resolveEntryPeriod(x); return p.year===mo.year && p.month===mo.month; }),'amount'));
+      trendExp = months.map(mo=> sum(rangedExp.filter(x=>{ const p=resolveEntryPeriod(x); return p.year===mo.year && p.month===mo.month; }),'amount'));
+    }
+  } else if(s.period==='month'){
     const yr = parseInt(s.year,10), mo = parseInt(s.month,10);
     const daysInMonth = new Date(yr, mo+1, 0).getDate();
     trendLabels = Array.from({length:daysInMonth}, (_,i)=>String(i+1));
@@ -3252,6 +3355,7 @@ function renderReports(c){
     ]},
     options: baseChartOptions()
   });
+  }
 
 }
 
