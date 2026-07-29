@@ -192,6 +192,9 @@ tbody tr:hover{background:rgba(193,80,46,.05);}
 .tag.constant{background:rgba(61,122,110,.15);color:var(--teal);}
 .tag.variable{background:rgba(242,168,29,.18);color:#8a5f0e;}
 .tag.auto{background:rgba(120,120,120,.15);color:var(--ink-soft);margin-left:4px;}
+.tag.yearly{background:rgba(58,102,196,.15);color:#2b4d99;margin-left:4px;}
+.tag.capex{background:rgba(155,64,181,.15);color:#7a2d99;margin-left:4px;}
+.tag.carried{background:rgba(58,150,110,.15);color:#1f6b46;margin-left:4px;}
 .row-actions{display:flex;gap:6px;justify-content:flex-end;}
 .empty-state{padding:40px 20px;text-align:center;color:var(--ink-soft);}
 .empty-state svg{width:38px;height:38px;opacity:.4;margin-bottom:8px;}
@@ -375,6 +378,7 @@ function icon(name){
     empty:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
     sync:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
     grip:'<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>',
+    search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
   };
   return I[name]||'';
 }
@@ -1513,7 +1517,7 @@ const state = {
   view: 'dashboard',
   dashboard: { year:'all', month:'all', chartsGenerated:false },
   buildings: { collapsed:{}, showHidden:false },
-  expenses: { kind:'constant', building:'all', unit:'all', year:'all', month:'all', category:'all' },
+  expenses: { kind:'constant', building:'all', unit:'all', year:'all', month:'all', category:'all', auditHidden:false },
   income: { building:'all', unit:'all', year:'all', month:'all' },
   reports: { scope:'total', building:'', unit:'', period:'year', year:new Date().getFullYear(), month:'all', rangeStart:'', rangeEnd:'', trendRange:{enabled:false, start:'', end:''}, chartsGenerated:false },
   charts: {},
@@ -2091,9 +2095,10 @@ function renderUnitDetailModal(u,b,ds){
           <tbody>
           ${exp.length? exp.map(e=>`<tr>
               <td><input type="checkbox" class="ud-exp-check" data-id="${e.id}" ${ds.selected[e.id]?'checked':''}></td>
-              <td>${fmtDate(e.date)}</td><td><span class="tag ${e.type}">${e.type}</span>${e.auto?`<span class="tag auto" title="Auto-applied from a prior month">auto</span>`:''}</td>
-              <td>${escapeHtml(e.category)}</td><td>${escapeHtml(e.description||'—')}</td><td class="amt neg">${fmtMoney(e.amount)}</td>
+              <td>${fmtDate(e.date)}</td><td><span class="tag ${e.type}">${e.type}</span>${e.auto?`<span class="tag auto" title="Auto-applied from a prior month">auto</span>`:''}${e.carried?`<span class="tag carried" title="Manually carried forward to this month">carried</span>`:''}</td>
+              <td>${escapeHtml(e.category)}${e.type==='constant'&&isCapexCategory(e.category)?`<span class="tag capex" title="CapEx — amount is set manually each month, never auto-filled">capex</span>`:''}</td><td>${escapeHtml(e.description||'—')}</td><td class="amt neg">${fmtMoney(e.amount)}</td>
               <td class="row-actions">
+                ${e.type==='constant'?`<button class="btn btn-sm btn-icon" data-ud-carry="${e.id}" title="Carry forward to succeeding months/years">${icon('sync')}</button>`:''}
                 <button class="btn btn-sm btn-icon" data-ud-edit="${e.id}" title="Edit">${icon('edit')}</button>
                 <button class="btn btn-sm btn-icon btn-danger" data-ud-del="${e.id}" title="Delete">${icon('trash')}</button>
               </td></tr>`).join('')
@@ -2146,6 +2151,10 @@ function c_ud_wire_rows(u,b,ds){
     const e = db.expenses.find(x=>x.id===btn.dataset.udEdit);
     openExpenseForm(e, null, ()=>renderUnitDetailModal(u,b,ds));
   }));
+  document.querySelectorAll('[data-ud-carry]').forEach(btn=>btn.addEventListener('click', ()=>{
+    const e = db.expenses.find(x=>x.id===btn.dataset.udCarry);
+    if(e) openCarryForwardModal(e, ()=>renderUnitDetailModal(u,b,ds));
+  }));
   document.querySelectorAll('[data-ud-del]').forEach(btn=>btn.addEventListener('click', ()=>{
     const e = db.expenses.find(x=>x.id===btn.dataset.udDel);
     confirmModal(`Delete this expense entry (${fmtMoney(e.amount)})?`, ()=>{
@@ -2160,7 +2169,22 @@ function c_ud_wire_rows(u,b,ds){
 const EXPENSE_CATEGORIES = {
   constant: ['Subscriptions (Wi-fi/Streaming)','Lease'],
   variable: ['Utilities','Association Dues','Insurance','Property Management Fee','Loan/Amortization','Other Constant','Cleaning','Repairs','Restocking/Supplies','Guest Amenities','Platform/Booking Fees','Marketing','Other Variable'],
+  // CapEx (capital expenditure) categories are a subset of the "constant"
+  // categories above — they keep type:'constant' and everything that comes
+  // with it (audits, reporting, etc.) but are exempt from the auto
+  // carry-forward in projectConstantExpensesForward(). Lease payments can
+  // step up/down (renewals, escalations) so the amount shouldn't just be
+  // copied from the previous month — each month has to be entered manually.
+  capex: ['Lease'],
 };
+
+/* True when a constant-expense category is a CapEx item (see the `capex`
+   list above). Used to exempt these categories from the automatic
+   month-to-month carry-forward, since their amount can change and should be
+   set by hand for every occurrence rather than reused from the last entry. */
+function isCapexCategory(category){
+  return EXPENSE_CATEGORIES.capex.includes(category);
+}
 
 /* Detect months where a unit's usual constant (recurring) expenses appear to
    be missing. A category only counts as "expected" for a unit once that unit
@@ -2170,6 +2194,8 @@ const EXPENSE_CATEGORIES = {
    same resolveEntryPeriod logic the rest of the app uses to bucket entries
    into months), we check whether each of the unit's expected categories has
    a matching constant-type expense logged; anything missing is a gap.
+   A category that's a yearly item (see isYearlySubscription) is only
+   expected once a year, in its original anniversary month — not every month.
    Returns gaps sorted chronologically, grouped by unit within each period. */
 function auditConstantCoverage(units, yearFilter){
   const gaps = [];
@@ -2178,6 +2204,12 @@ function auditConstantCoverage(units, yearFilter){
     const constantExpenses = expensesOf(u.id).filter(e=>e.type==='constant');
     const expectedCategories = Array.from(new Set(constantExpenses.map(e=>e.category)));
     if(!expectedCategories.length) return; // nothing established to audit against
+
+    const anchorMonth = {};
+    expectedCategories.forEach(cat=>{
+      const sample = constantExpenses.find(e=>e.category===cat && isYearlySubscription(u,e));
+      if(sample) anchorMonth[cat] = resolveEntryPeriod(sample).month;
+    });
 
     const periods = new Map();
     uActivity.forEach(entry=>{
@@ -2196,7 +2228,11 @@ function auditConstantCoverage(units, yearFilter){
 
     periods.forEach(({year,month}, key)=>{
       const present = presentByPeriod[key] || new Set();
-      const missing = expectedCategories.filter(cat=>!present.has(cat));
+      const missing = expectedCategories.filter(cat=>{
+        if(present.has(cat)) return false;
+        if(cat in anchorMonth) return anchorMonth[cat]===month; // yearly item: only expected on its anniversary month
+        return true;
+      });
       if(missing.length) gaps.push({unitId:u.id, year, month, missing});
     });
   });
@@ -2215,6 +2251,29 @@ function isConstantCategoryForUnit(unitId, category){
   return EXPENSE_CATEGORIES.constant.includes(category);
 }
 
+/* Special case: Air Residences bills its Wi-fi/streaming subscription once a
+   year rather than monthly like every other constant expense. A constant
+   expense's own `frequency` field ('monthly'/'yearly'), when explicitly set
+   via the Billing Frequency picker on the Add/Edit Expense form, always
+   takes priority — this lets any unit's payment be manually marked yearly
+   or monthly. When frequency isn't set (e.g. older entries), falls back to
+   detecting it automatically by building name + category + a "WiFi" mention
+   in the entry's description (note), so it only kicks in for the specific
+   line item it's meant for — other subscriptions (e.g. a separate streaming
+   service) on the same unit still recur monthly as usual. Used by
+   projectConstantExpensesForward and auditConstantCoverage so a yearly bill
+   doesn't get auto-filled — or flagged as "missing" — every single month. */
+function isYearlySubscription(unit, entry){
+  if(!entry) return false;
+  if(entry.frequency==='yearly') return true;
+  if(entry.frequency==='monthly') return false;
+  if(!unit) return false;
+  const b = getBuilding(unit.buildingId);
+  if(!b || b.name.trim().toLowerCase()!=='air residences') return false;
+  if(!entry.category || !entry.category.toLowerCase().includes('subscription')) return false;
+  return /wi-?fi/i.test(entry.description||'');
+}
+
 /* Carries each unit's established recurring (constant) expenses forward
    automatically. For every unit + category pair that's been logged as
    constant before, this finds the most recent instance and — if the real
@@ -2225,6 +2284,13 @@ function isConstantCategoryForUnit(unitId, category){
    every month going forward without manual re-entry. Auto-created entries
    are flagged with auto:true so they stay identifiable (and remain fully
    editable/deletable like any other entry). Skips inactive/hidden units.
+   Air Residences' yearly Wi-fi subscription (see isYearlySubscription) is
+   the one exception — it steps forward one year at a time instead of one
+   month at a time. CapEx categories (see isCapexCategory, e.g. Lease) are
+   skipped entirely: their amount isn't guaranteed to stay the same from one
+   month to the next (renewals, escalations), so instead of silently
+   reusing the last figure, each month is left for the user to add by hand
+   — auditConstantCoverage will still flag it as missing until they do.
    Returns the number of entries created. */
 function projectConstantExpensesForward(){
   const now = new Date();
@@ -2241,9 +2307,13 @@ function projectConstantExpensesForward(){
       if(!existing || rank > existing.rank) latestByCategory.set(e.category, {entry:e, rank});
     });
     latestByCategory.forEach(({entry, rank}, category)=>{
+      if(isCapexCategory(category)) return; // manual amount every month — never auto-filled
+      const step = isYearlySubscription(u, entry) ? 12 : 1;
       let cursor = rank;
-      while(cursor < curKey){
-        cursor++;
+      while(true){
+        const next = cursor + step;
+        if(next > curKey) break;
+        cursor = next;
         const year = Math.floor(cursor/12), month = cursor%12;
         const already = expensesOf(u.id).some(e=>{
           if(e.type!=='constant' || e.category!==category) return false;
@@ -2254,7 +2324,7 @@ function projectConstantExpensesForward(){
           const day = (entry.date||'').slice(8,10) || '01';
           db.expenses.push({
             id:uid(), unitId:u.id, type:'constant', category,
-            description: entry.description||'', amount: entry.amount,
+            description: entry.description||'', amount: entry.amount, frequency: entry.frequency,
             date: `${year}-${String(month+1).padStart(2,'0')}-${day}`,
             timestamp: new Date().toISOString(), auto:true
           });
@@ -2291,6 +2361,92 @@ function reapplyConstantExpensesForward(entry){
   projectConstantExpensesForward();
 }
 
+/* Manually pushes one constant-expense entry's amount/description into every
+   succeeding month (or, for a yearly item, every succeeding year) through a
+   month/year the person picks — a hand-triggered counterpart to
+   projectConstantExpensesForward(), which only auto-fills up through today
+   and, since it skips CapEx categories entirely (see isCapexCategory), never
+   touches something like Lease at all. This is what gives any constant
+   category, CapEx included, a way to be filled in further ahead than "now",
+   on demand, per category. Only months that don't already have an entry for
+   this unit+category are created; anything already logged is left alone.
+   New entries are tagged carried:true — distinct from auto:true — so it's
+   clear they came from an explicit action rather than the background job.
+   Returns the number of entries created. */
+function carryExpenseForward(entry, endYear, endMonth){
+  const unit = getUnit(entry.unitId);
+  const p = resolveEntryPeriod(entry);
+  if(p.year==null || isNaN(p.year) || p.month==null) return 0;
+  const endKey = endYear*12 + endMonth;
+  const step = isYearlySubscription(unit, entry) ? 12 : 1;
+  let cursor = p.year*12 + p.month;
+  let created = 0;
+  while(true){
+    const next = cursor + step;
+    if(next > endKey) break;
+    cursor = next;
+    const year = Math.floor(cursor/12), month = cursor%12;
+    const already = expensesOf(entry.unitId).some(e=>{
+      if(e.type!=='constant' || e.category!==entry.category) return false;
+      const ep = resolveEntryPeriod(e);
+      return ep.year===year && ep.month===month;
+    });
+    if(!already){
+      const day = (entry.date||'').slice(8,10) || '01';
+      db.expenses.push({
+        id:uid(), unitId:entry.unitId, type:'constant', category:entry.category,
+        description: entry.description||'', amount: entry.amount, frequency: entry.frequency,
+        date: `${year}-${String(month+1).padStart(2,'0')}-${day}`,
+        timestamp: new Date().toISOString(), carried:true
+      });
+      created++;
+    }
+  }
+  return created;
+}
+
+/* Small form for the carryExpenseForward() action above: lets the person
+   pick how far ahead to fill (year only for a yearly item, year+month for a
+   monthly one) and reuses this entry's own year/month as the starting point,
+   offering a handful of succeeding years to choose from. */
+function openCarryForwardModal(entry, onDone){
+  const unit = getUnit(entry.unitId);
+  const p = resolveEntryPeriod(entry);
+  if(p.year==null || isNaN(p.year) || p.month==null){
+    toast('This entry needs a resolvable month before it can be carried forward.','error');
+    return;
+  }
+  const yearly = isYearlySubscription(unit, entry);
+  const yearChoices = [];
+  for(let y=p.year; y<=p.year+6; y++) yearChoices.push({value:String(y), label:String(y)});
+  openFormModal({
+    title:`Carry "${entry.category}" forward`,
+    submitLabel:'Apply',
+    fields: yearly
+      ? [{name:'endYear', label:'Through year', type:'select', options:yearChoices, required:true}]
+      : [
+          {name:'endYear', label:'Through year', type:'select', options:yearChoices, required:true, half:true},
+          {name:'endMonth', label:'Through month', type:'select', options:monthOptions(false), required:true, half:true},
+        ],
+    values: yearly ? {endYear:String(p.year+1)} : {endYear:String(p.year), endMonth:String(p.month)},
+    extraHtml: `<p class="hint" style="margin-top:0;">Fills in every ${yearly?'year':'month'} for ${escapeHtml(unit?unit.name:'this unit')}'s "${escapeHtml(entry.category)}" from ${yearly?p.year:`${MONTHS_FULL[p.month]} ${p.year}`} through the point you pick below, reusing this entry's amount${entry.description?' and description':''}. Any month that's already logged is left untouched.</p>`,
+    onSubmit(data){
+      const endYear = parseInt(data.endYear,10);
+      const endMonth = yearly ? p.month : parseInt(data.endMonth,10);
+      if((endYear*12+endMonth) <= (p.year*12+p.month)){
+        toast("Pick an end date after the entry's own date.",'error');
+        return;
+      }
+      const created = carryExpenseForward(entry, endYear, endMonth);
+      persist();
+      closeModal();
+      if(created) logActivity(`Carried "${entry.category}" forward ${created} month${created===1?'':'s'} for unit "${unit?unit.name:'—'}".`,'update');
+      if(onDone) onDone(); else renderView();
+      toast(created ? `${created} month${created===1?'':'s'} filled in` : 'Those months were already filled in');
+    }
+  });
+}
+
 /* Look for an existing entry that matches on unit + date + amount, used to
    warn about likely duplicates when someone manually logs a new entry
    (import-time duplicate detection is handled separately in annotateDuplicates). */
@@ -2298,13 +2454,102 @@ function findLikelyDuplicate(list, unitId, date, amount, excludeId){
   return list.find(x=> x.id!==excludeId && x.unitId===unitId && x.date===date && Math.abs((parseFloat(x.amount)||0)-amount)<0.01);
 }
 
+/* Group existing entries (income or expenses) that share the same unit,
+   date, and amount — the same signal findLikelyDuplicate uses at save time,
+   but scanning everything already on the ledger rather than one new entry.
+   Only groups with 2+ matching entries are returned (the actual likely
+   duplicates), newest date first. */
+function findDuplicateGroups(list){
+  const groups = new Map();
+  list.forEach(e=>{
+    if(!e.unitId || !e.date) return;
+    const key = `${e.unitId}|${e.date}|${(parseFloat(e.amount)||0).toFixed(2)}`;
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(e);
+  });
+  return Array.from(groups.values()).filter(g=>g.length>1).sort((a,b)=> b[0].date.localeCompare(a[0].date));
+}
+
+/* Detect & review duplicates modal — scans the *entire* income or expense
+   ledger (not just whatever's currently filtered on screen) for likely
+   duplicates, and lets the person delete the extras right from the list.
+   Re-renders itself in place after every delete so the counts and groups
+   stay current without having to reopen the modal. */
+function openDuplicatesModal(kind, onDone){
+  const isIncome = kind==='income';
+  const render = ()=>{
+    const list = isIncome ? db.income : db.expenses;
+    const groups = findDuplicateGroups(list);
+    const body = groups.length ? groups.map((g,gi)=>{
+      const u = getUnit(g[0].unitId);
+      const sorted = g.slice().sort((a,b)=> (b.timestamp||b.date).localeCompare(a.timestamp||a.date));
+      return `<div class="dup-group" style="border:1px solid var(--border,rgba(0,0,0,.12));border-radius:10px;padding:12px;margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+          <strong>${escapeHtml(u?u.name:'—')} · ${fmtDate(g[0].date)} · ${fmtMoney(g[0].amount)}</strong>
+          <button class="btn btn-sm" data-keep-first="${gi}">Keep newest, delete rest (${g.length-1})</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>${isIncome?'<th>Note</th>':'<th>Category</th><th>Description</th>'}<th>Logged</th><th></th></tr></thead>
+            <tbody>
+              ${sorted.map((e,idx)=>`<tr>${isIncome?`<td>${escapeHtml(e.note||'—')}</td>`:`<td>${escapeHtml(e.category)}${e.auto?`<span class="tag auto" title="Auto-applied from a prior month">auto</span>`:''}</td><td>${escapeHtml(e.description||'—')}</td>`}
+                <td class="mono" style="font-size:11.5px;color:var(--ink-soft);">${fmtTimestamp(e.timestamp||e.date)}${idx===0?' <span class="hint" style="margin:0;">(newest)</span>':''}</td>
+                <td class="row-actions"><button class="btn btn-sm btn-icon btn-danger" data-del-dup="${e.id}">${icon('trash')}</button></td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+    }).join('') : `<div class="empty-state">No likely duplicates found — every ${isIncome?'income':'expense'} entry has a unique unit, date, and amount combination.</div>`;
+
+    openModal(`
+      <div class="modal-head"><h3>Duplicate ${isIncome?'income':'expense'} entries</h3><button class="modal-close" onclick="closeModal()">${icon('close')}</button></div>
+      <div class="modal-body">
+        <p class="hint" style="margin-top:0;">Entries are grouped when they share the same unit, date, and amount — the same signal used to warn about duplicates when logging a new entry.</p>
+        ${body}
+      </div>
+      <div class="modal-foot"><button class="btn" onclick="closeModal()">Close</button></div>
+    `, {wide:true});
+
+    document.querySelectorAll('[data-del-dup]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = btn.dataset.delDup;
+        if(isIncome) db.income = db.income.filter(x=>x.id!==id);
+        else db.expenses = db.expenses.filter(x=>x.id!==id);
+        logActivity(`Deleted duplicate ${isIncome?'income':'expense'} entry.`,'delete');
+        persist();
+        render();
+        if(onDone) onDone();
+        toast('Duplicate deleted');
+      });
+    });
+    document.querySelectorAll('[data-keep-first]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const g = groups[parseInt(btn.dataset.keepFirst,10)];
+        if(!g) return;
+        const sorted = g.slice().sort((a,b)=> (b.timestamp||b.date).localeCompare(a.timestamp||a.date));
+        const toDelete = sorted.slice(1).map(e=>e.id);
+        if(isIncome) db.income = db.income.filter(x=> !toDelete.includes(x.id));
+        else db.expenses = db.expenses.filter(x=> !toDelete.includes(x.id));
+        logActivity(`Deleted ${toDelete.length} duplicate ${isIncome?'income':'expense'} entr${toDelete.length===1?'y':'ies'}, keeping the newest.`,'delete');
+        persist();
+        render();
+        if(onDone) onDone();
+        toast(`${toDelete.length} duplicate${toDelete.length===1?'':'s'} deleted`);
+      });
+    });
+  };
+  render();
+}
+
 function renderExpenses(c){
   const s = state.expenses;
   s.selected = s.selected || {};
   if(!s.category) s.category = 'all';
   if(s.category!=='all' && !EXPENSE_CATEGORIES[s.kind].includes(s.category)) s.category = 'all';
+  const dupGroupCount = findDuplicateGroups(db.expenses).length;
   setTopbar('Expenses', 'Track constant and variable costs, itemized per unit', `
     <button class="btn btn-danger" id="bulk-del-exp-btn" style="display:none;">${icon('trash')} Delete selected</button>
+    <button class="btn" id="detect-dup-exp-btn">${icon('search')} Detect duplicates${dupGroupCount?` (${dupGroupCount})`:''}</button>
     <button class="btn" id="bulk-add-exp-btn">${icon('plus')} Bulk add</button>
     <button class="btn btn-primary" id="add-expense-btn">${icon('plus')} Add expense</button>
   `);
@@ -2322,20 +2567,23 @@ function renderExpenses(c){
   c.innerHTML = `
     ${s.kind==='constant' ? `
     <div class="card">
-      <div class="card-head"><h3>Constant expense coverage${s.year!=='all'?` <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(${s.year})</span>`:''}</h3></div>
-      ${auditGaps.length ? `
+      <div class="card-head">
+        <h3>Constant expense coverage${s.year!=='all'?` <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(${s.year})</span>`:''}${auditGaps.length && s.auditHidden?` <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(${auditGaps.length} hidden)</span>`:''}</h3>
+        <button class="btn btn-sm" id="toggle-audit-btn">${s.auditHidden ? `${icon('eye')} Show` : `${icon('eyeoff')} Hide`}</button>
+      </div>
+      ${s.auditHidden ? '' : (auditGaps.length ? `
         <div class="table-wrap">
           <table>
             <thead><tr><th>Month</th><th>Unit</th><th>Missing constant expense${auditGaps.some(g=>g.missing.length>1)?'s':''}</th></tr></thead>
             <tbody>
               ${auditGaps.map(g=>{
                 const u = getUnit(g.unitId);
-                return `<tr><td>${MONTHS[g.month]} ${g.year}</td><td>${escapeHtml(u?u.name:'—')}</td><td>${g.missing.map(m=>`<span class="tag constant">${escapeHtml(m)}</span>`).join(' ')}</td></tr>`;
+                return `<tr><td>${MONTHS[g.month]} ${g.year}</td><td>${escapeHtml(u?u.name:'—')}</td><td>${g.missing.map(m=>`<span class="tag constant">${escapeHtml(m)}</span>${isCapexCategory(m)?`<span class="tag capex" title="CapEx — enter this month's amount manually">capex</span>`:''}`).join(' ')}</td></tr>`;
               }).join('')}
             </tbody>
           </table>
         </div>
-      ` : `<div class="hint">Every unit's recurring constant expenses are logged for each active month${s.year!=='all'?` in ${s.year}`:''}.</div>`}
+      ` : `<div class="hint">Every unit's recurring constant expenses are logged for each active month${s.year!=='all'?` in ${s.year}`:''}.</div>`)}
     </div>
     ` : ''}
     <div class="card" style="padding-bottom:14px;">
@@ -2363,9 +2611,10 @@ function renderExpenses(c){
           ${list.length? list.map(e=>{
             const u = getUnit(e.unitId);
             return `<tr><td><input type="checkbox" class="exp-check" data-id="${e.id}" ${s.selected[e.id]?'checked':''}></td>
-              <td>${fmtDate(e.date)}</td><td>${escapeHtml(u?u.name:'—')}${e.auto?`<span class="tag auto" title="Auto-applied from a prior month">auto</span>`:''}</td><td>${escapeHtml(e.category)}</td>
+              <td>${fmtDate(e.date)}</td><td>${escapeHtml(u?u.name:'—')}${e.auto?`<span class="tag auto" title="Auto-applied from a prior month">auto</span>`:''}${e.carried?`<span class="tag carried" title="Manually carried forward to this month">carried</span>`:''}</td><td>${escapeHtml(e.category)}${e.type==='constant'&&isYearlySubscription(u,e)?`<span class="tag yearly" title="Billed yearly, not monthly">yearly</span>`:''}${e.type==='constant'&&isCapexCategory(e.category)?`<span class="tag capex" title="CapEx — amount is set manually each month, never auto-filled">capex</span>`:''}</td>
               <td>${escapeHtml(e.description||'—')}</td><td class="amt neg">${fmtMoney(e.amount)}</td>
               <td class="row-actions">
+                ${e.type==='constant'?`<button class="btn btn-sm btn-icon" data-carry-exp="${e.id}" title="Carry forward to succeeding months/years">${icon('sync')}</button>`:''}
                 <button class="btn btn-sm btn-icon" data-edit-exp="${e.id}">${icon('edit')}</button>
                 <button class="btn btn-sm btn-icon btn-danger" data-del-exp="${e.id}">${icon('trash')}</button>
               </td></tr>`;
@@ -2376,6 +2625,8 @@ function renderExpenses(c){
     </div>
   `;
 
+  const toggleAuditBtn = document.getElementById('toggle-audit-btn');
+  if(toggleAuditBtn) toggleAuditBtn.addEventListener('click', ()=>{ s.auditHidden = !s.auditHidden; renderExpenses(c); });
   c.querySelectorAll('[data-kind]').forEach(b=>b.addEventListener('click',()=>{ s.kind=b.dataset.kind; s.category='all'; renderExpenses(c); }));
   document.getElementById('exp-building').addEventListener('change', e=>{ s.building=e.target.value; s.unit='all'; renderExpenses(c); });
   document.getElementById('exp-unit').addEventListener('change', e=>{ s.unit=e.target.value; renderExpenses(c); });
@@ -2383,8 +2634,13 @@ function renderExpenses(c){
   document.getElementById('exp-year').addEventListener('change', e=>{ s.year=e.target.value; renderExpenses(c); });
   document.getElementById('exp-month').addEventListener('change', e=>{ s.month=e.target.value; renderExpenses(c); });
   document.getElementById('add-expense-btn').addEventListener('click', ()=>openExpenseForm(null, s.kind, ()=>renderExpenses(c)));
+  document.getElementById('detect-dup-exp-btn').addEventListener('click', ()=>openDuplicatesModal('expense', ()=>renderExpenses(c)));
   document.getElementById('bulk-add-exp-btn').addEventListener('click', ()=>openBulkEntryForm('expense', {presetType: s.kind, presetUnitId: s.unit!=='all'?s.unit:undefined, onDone:()=>renderExpenses(c)}));
   c.querySelectorAll('[data-edit-exp]').forEach(b=>b.addEventListener('click',()=>openExpenseForm(db.expenses.find(x=>x.id===b.dataset.editExp), null, ()=>renderExpenses(c))));
+  c.querySelectorAll('[data-carry-exp]').forEach(b=>b.addEventListener('click',()=>{
+    const e = db.expenses.find(x=>x.id===b.dataset.carryExp);
+    if(e) openCarryForwardModal(e, ()=>renderExpenses(c));
+  }));
   c.querySelectorAll('[data-del-exp]').forEach(b=>b.addEventListener('click',()=>{
     const e = db.expenses.find(x=>x.id===b.dataset.delExp);
     confirmModal(`Delete this expense entry (${fmtMoney(e.amount)})?`, ()=>{
@@ -2418,17 +2674,27 @@ function renderExpenses(c){
 function openExpenseForm(expense, presetKind, onDone, presetUnitId){
   if(db.units.length===0){ toast('Add a unit first before logging expenses.','error'); return; }
   const kind = expense? expense.type : (presetKind||'constant');
+  // Default the Billing Frequency picker: honor a frequency explicitly saved
+  // on the entry before; otherwise fall back to the auto-detect heuristic
+  // (see isYearlySubscription) so previously-created Air Residences Wi-fi
+  // entries still show "Yearly" pre-selected even without the field set.
+  const defaultFrequency = expense
+    ? (expense.frequency || (isYearlySubscription(getUnit(expense.unitId), expense) ? 'yearly' : 'monthly'))
+    : 'monthly';
   openFormModal({
     title: expense? 'Edit expense' : 'Add expense',
     fields:[
       {name:'unitId', label:'Unit', type:'select', options:unitOptions(false), required:true, half:true},
       {name:'type', label:'Type', type:'select', options:[{value:'constant',label:'Constant'},{value:'variable',label:'Variable'}], required:true, half:true},
+      {name:'frequency', label:'Billing Frequency', type:'select', options:[{value:'monthly',label:'Monthly'},{value:'yearly',label:'Yearly'}], required:true, half:true},
       {name:'category', label:'Category', type:'select', options:[...EXPENSE_CATEGORIES.constant,...EXPENSE_CATEGORIES.variable].filter((v,i,a)=>a.indexOf(v)===i).map(x=>({value:x,label:x})), required:true, half:true},
       {name:'date', label:'Date', type:'date', required:true, half:true},
       {name:'amount', label:'Amount (₱)', type:'number', step:'0.01', required:true, half:true},
       {name:'description', label:'Description', type:'text', half:true},
     ],
-    values: expense || {unitId:presetUnitId||db.units[0].id, type:kind, date:todayISO(), category:kind==='constant'?EXPENSE_CATEGORIES.constant[0]:EXPENSE_CATEGORIES.variable[0]},
+    values: expense
+      ? {...expense, frequency:defaultFrequency}
+      : {unitId:presetUnitId||db.units[0].id, type:kind, frequency:defaultFrequency, date:todayISO(), category:kind==='constant'?EXPENSE_CATEGORIES.constant[0]:EXPENSE_CATEGORIES.variable[0]},
     onSubmit(data){
       const amount = parseFloat(data.amount);
       if(!amount || amount<=0){ toast('Enter a valid amount','error'); return; }
@@ -2436,22 +2702,27 @@ function openExpenseForm(expense, presetKind, onDone, presetUnitId){
       // unit+category has been established as a recurring cost, so a
       // recurring bill doesn't accidentally get logged as variable.
       if(!expense && isConstantCategoryForUnit(data.unitId, data.category)) data.type = 'constant';
+      // Billing frequency (Monthly/Yearly) only means anything for constant
+      // expenses — clear it for variable ones so it doesn't linger and get
+      // misread later if the entry is ever switched back to constant.
+      const frequency = data.type==='constant' ? (data.frequency==='yearly' ? 'yearly' : 'monthly') : undefined;
       const doSave = ()=>{
         let savedEntry;
         if(expense){
-          Object.assign(expense, {unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description});
+          Object.assign(expense, {unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description, frequency});
           savedEntry = expense;
           logActivity(`Updated expense "${data.category}" (${fmtMoney(amount)}).`,'update');
           toast('Expense updated');
         } else {
-          savedEntry = {id:uid(), unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description, timestamp:new Date().toISOString()};
+          savedEntry = {id:uid(), unitId:data.unitId, type:data.type, category:data.category, date:data.date, amount, description:data.description, frequency, timestamp:new Date().toISOString()};
           db.expenses.push(savedEntry);
           logActivity(`Added ${data.type} expense "${data.category}" (${fmtMoney(amount)}).`,'create');
           toast('Expense added');
         }
         // Whenever the saved entry is constant, reapply it forward: this
         // regenerates any auto-projected months after the date just set so
-        // they pick up the latest amount/description/date, not just fill gaps.
+        // they pick up the latest amount/description/date/frequency, not
+        // just fill gaps.
         if(data.type==='constant') reapplyConstantExpensesForward(savedEntry);
         persist(); closeModal(); if(onDone) onDone(); else renderView();
       };
@@ -2463,14 +2734,23 @@ function openExpenseForm(expense, presetKind, onDone, presetUnitId){
       }
     }
   });
+  // The frequency picker only matters for constant expenses — hide it
+  // whenever Type is set to Variable, and re-show it if switched back.
+  const typeSelect = document.querySelector('#modal-form [name="type"]');
+  const freqSelect = document.querySelector('#modal-form [name="frequency"]');
+  const freqWrap = freqSelect ? freqSelect.closest('.field') : null;
+  const syncFreqVisibility = ()=>{ if(freqWrap) freqWrap.style.display = typeSelect.value==='constant' ? '' : 'none'; };
+  if(typeSelect && freqWrap){ syncFreqVisibility(); typeSelect.addEventListener('change', syncFreqVisibility); }
 }
 
 /* ============================== INCOME ================================ */
 function renderIncome(c){
   const s = state.income;
   s.selected = s.selected || {};
+  const dupGroupCount = findDuplicateGroups(db.income).length;
   setTopbar('Income', 'Log gross booking income per unit, timestamped', `
     <button class="btn btn-danger" id="bulk-del-inc-btn" style="display:none;">${icon('trash')} Delete selected</button>
+    <button class="btn" id="detect-dup-inc-btn">${icon('search')} Detect duplicates${dupGroupCount?` (${dupGroupCount})`:''}</button>
     <button class="btn" id="bulk-add-inc-btn">${icon('plus')} Bulk add</button>
     <button class="btn btn-primary" id="add-income-btn">${icon('plus')} Add income</button>
   `);
@@ -2521,6 +2801,7 @@ function renderIncome(c){
   document.getElementById('inc-year').addEventListener('change', e=>{ s.year=e.target.value; renderIncome(c); });
   document.getElementById('inc-month').addEventListener('change', e=>{ s.month=e.target.value; renderIncome(c); });
   document.getElementById('add-income-btn').addEventListener('click', ()=>openIncomeForm(null, ()=>renderIncome(c)));
+  document.getElementById('detect-dup-inc-btn').addEventListener('click', ()=>openDuplicatesModal('income', ()=>renderIncome(c)));
   document.getElementById('bulk-add-inc-btn').addEventListener('click', ()=>openBulkEntryForm('income', {presetUnitId: s.unit!=='all'?s.unit:undefined, onDone:()=>renderIncome(c)}));
   c.querySelectorAll('[data-edit-inc]').forEach(b=>b.addEventListener('click',()=>openIncomeForm(db.income.find(x=>x.id===b.dataset.editInc), ()=>renderIncome(c))));
   c.querySelectorAll('[data-del-inc]').forEach(b=>b.addEventListener('click',()=>{
