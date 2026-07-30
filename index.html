@@ -291,6 +291,11 @@ textarea#import-text{width:100%;min-height:150px;resize:vertical;font-family:'Je
 .status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;}
 .status-dot.on{background:#2e8b57;}
 .status-dot.off{background:#b0a48a;}
+.sig-grid{display:flex;flex-wrap:wrap;gap:38px 48px;margin-top:6px;}
+.sig-block{flex:1 1 200px;min-width:180px;text-align:center;}
+.sig-line{border-top:1px solid var(--ink);margin-top:46px;margin-bottom:6px;}
+.sig-name{font-weight:700;font-size:13px;}
+.sig-title{font-size:11.5px;color:var(--ink-soft);}
 
 @media print{
   .sidebar,.topbar-actions,.no-print,.row-actions{display:none!important;}
@@ -395,7 +400,7 @@ let db = null;
 
 function defaultDb(){
   return { buildings:[], units:[], income:[], expenses:[], activity:[],
-    settings:{ useSheets:false, gasUrl:'', lastSync:null } };
+    settings:{ useSheets:false, gasUrl:'', lastSync:null, reportSignatories:[] } };
 }
 
 function loadLocal(){
@@ -2200,8 +2205,9 @@ function isCapexCategory(category){
 function auditConstantCoverage(units, yearFilter){
   const gaps = [];
   units.forEach(u=>{
-    const uActivity = incomeOf(u.id).concat(expensesOf(u.id));
-    const constantExpenses = expensesOf(u.id).filter(e=>e.type==='constant');
+    const uExpenses = expensesOf(u.id);
+    const uActivity = incomeOf(u.id).concat(uExpenses);
+    const constantExpenses = uExpenses.filter(e=>e.type==='constant');
     const expectedCategories = Array.from(new Set(constantExpenses.map(e=>e.category)));
     if(!expectedCategories.length) return; // nothing established to audit against
 
@@ -2299,28 +2305,31 @@ function projectConstantExpensesForward(){
   db.units.filter(u=>u.visible!==false).forEach(u=>{
     const constExp = expensesOf(u.id).filter(e=>e.type==='constant');
     const latestByCategory = new Map();
+    // category -> Set of already-logged "year*12+month" keys, built once per
+    // unit instead of re-filtering db.expenses on every month of every
+    // category's catch-up loop below (that rescan gets more expensive as
+    // db.expenses grows, including from entries this same loop just added).
+    const keysByCategory = new Map();
     constExp.forEach(e=>{
       const p = resolveEntryPeriod(e);
       if(p.year==null || isNaN(p.year) || p.month==null) return;
       const rank = p.year*12 + p.month;
       const existing = latestByCategory.get(e.category);
       if(!existing || rank > existing.rank) latestByCategory.set(e.category, {entry:e, rank});
+      if(!keysByCategory.has(e.category)) keysByCategory.set(e.category, new Set());
+      keysByCategory.get(e.category).add(rank);
     });
     latestByCategory.forEach(({entry, rank}, category)=>{
       if(isCapexCategory(category)) return; // manual amount every month — never auto-filled
       const step = isYearlySubscription(u, entry) ? 12 : 1;
+      const existingKeys = keysByCategory.get(category);
       let cursor = rank;
       while(true){
         const next = cursor + step;
         if(next > curKey) break;
         cursor = next;
-        const year = Math.floor(cursor/12), month = cursor%12;
-        const already = expensesOf(u.id).some(e=>{
-          if(e.type!=='constant' || e.category!==category) return false;
-          const p = resolveEntryPeriod(e);
-          return p.year===year && p.month===month;
-        });
-        if(!already){
+        if(!existingKeys.has(cursor)){
+          const year = Math.floor(cursor/12), month = cursor%12;
           const day = (entry.date||'').slice(8,10) || '01';
           db.expenses.push({
             id:uid(), unitId:u.id, type:'constant', category,
@@ -2328,6 +2337,7 @@ function projectConstantExpensesForward(){
             date: `${year}-${String(month+1).padStart(2,'0')}-${day}`,
             timestamp: new Date().toISOString(), auto:true
           });
+          existingKeys.add(cursor);
           created++;
         }
       }
@@ -2379,19 +2389,22 @@ function carryExpenseForward(entry, endYear, endMonth){
   if(p.year==null || isNaN(p.year) || p.month==null) return 0;
   const endKey = endYear*12 + endMonth;
   const step = isYearlySubscription(unit, entry) ? 12 : 1;
+  // Built once, up front — same reasoning as projectConstantExpensesForward:
+  // checking a Set is O(1) per month instead of re-filtering the unit's
+  // whole expense history (which also keeps growing as this loop runs).
+  const existingKeys = new Set(
+    expensesOf(entry.unitId)
+      .filter(e=>e.type==='constant' && e.category===entry.category)
+      .map(e=>{ const ep = resolveEntryPeriod(e); return ep.year*12 + ep.month; })
+  );
   let cursor = p.year*12 + p.month;
   let created = 0;
   while(true){
     const next = cursor + step;
     if(next > endKey) break;
     cursor = next;
-    const year = Math.floor(cursor/12), month = cursor%12;
-    const already = expensesOf(entry.unitId).some(e=>{
-      if(e.type!=='constant' || e.category!==entry.category) return false;
-      const ep = resolveEntryPeriod(e);
-      return ep.year===year && ep.month===month;
-    });
-    if(!already){
+    if(!existingKeys.has(cursor)){
+      const year = Math.floor(cursor/12), month = cursor%12;
       const day = (entry.date||'').slice(8,10) || '01';
       db.expenses.push({
         id:uid(), unitId:entry.unitId, type:'constant', category:entry.category,
@@ -2399,6 +2412,7 @@ function carryExpenseForward(entry, endYear, endMonth){
         date: `${year}-${String(month+1).padStart(2,'0')}-${day}`,
         timestamp: new Date().toISOString(), carried:true
       });
+      existingKeys.add(cursor);
       created++;
     }
   }
@@ -3237,6 +3251,62 @@ function openBulkEntryForm(kind, opts){
 }
 
 /* ============================== REPORTS ================================ */
+/* Lets the person configure the names/titles that appear in the signature
+   block at the bottom of every generated report (see the "Signatories" card
+   in renderReports). Rows are edited in place — add/remove re-renders the
+   modal, but typing in a field just updates the in-memory `rows` array so
+   focus isn't lost on every keystroke. Blank rows (no name and no title)
+   are dropped on save so they don't leave empty signature lines behind. */
+function openSignatoriesModal(onDone){
+  let rows = (db.settings.reportSignatories && db.settings.reportSignatories.length)
+    ? db.settings.reportSignatories.map(r=>({name:r.name||'', title:r.title||''}))
+    : [{name:'',title:''},{name:'',title:''}];
+
+  const render = ()=>{
+    openModal(`
+      <div class="modal-head"><h3>Report signatories</h3><button class="modal-close" onclick="closeModal()">${icon('close')}</button></div>
+      <div class="modal-body">
+        <p class="hint" style="margin-top:0;">These names and titles appear as a signature block at the bottom of every generated report.</p>
+        <div id="sig-rows">
+          ${rows.map((r,i)=>`
+            <div class="field-row" style="align-items:flex-end;">
+              <div class="field"><label>Name</label>
+                <input data-sig-name="${i}" style="width:100%" value="${escapeHtml(r.name)}" placeholder="e.g. Juan Dela Cruz">
+              </div>
+              <div class="field"><label>Title</label>
+                <input data-sig-title="${i}" style="width:100%" value="${escapeHtml(r.title)}" placeholder="e.g. Property Manager">
+              </div>
+              <div class="field" style="flex:0;">
+                <button type="button" class="btn btn-sm btn-icon btn-danger" data-sig-remove="${i}" title="Remove" ${rows.length<=1?'disabled':''}>${icon('trash')}</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <button type="button" class="btn btn-sm" id="sig-add-row">${icon('plus')} Add signatory</button>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" id="sig-save">Save</button>
+      </div>
+    `);
+    document.querySelectorAll('[data-sig-name]').forEach(inp=>inp.addEventListener('input', e=>{ rows[parseInt(inp.dataset.sigName,10)].name = e.target.value; }));
+    document.querySelectorAll('[data-sig-title]').forEach(inp=>inp.addEventListener('input', e=>{ rows[parseInt(inp.dataset.sigTitle,10)].title = e.target.value; }));
+    document.querySelectorAll('[data-sig-remove]').forEach(btn=>btn.addEventListener('click', ()=>{
+      rows.splice(parseInt(btn.dataset.sigRemove,10),1);
+      render();
+    }));
+    document.getElementById('sig-add-row').addEventListener('click', ()=>{ rows.push({name:'',title:''}); render(); });
+    document.getElementById('sig-save').addEventListener('click', ()=>{
+      db.settings.reportSignatories = rows.filter(r=> r.name.trim() || r.title.trim());
+      persist();
+      closeModal();
+      toast('Signatories saved');
+      if(onDone) onDone();
+    });
+  };
+  render();
+}
+
 function renderReports(c){
   const s = state.reports;
   // The month <select> for this period never has an "all months" option, so
@@ -3265,6 +3335,7 @@ function renderReports(c){
   }
   if(s.isolatedChart===undefined) s.isolatedChart = null;
   setTopbar('Reports', 'Generate color-coded charts, export CSV, or print to PDF', `
+    <button class="btn" id="edit-signatories-btn">${icon('edit')} Signatories</button>
     <button class="btn" id="export-csv-btn">${icon('download')} Export CSV</button>
     <button class="btn" id="print-pdf-btn">${icon('printer')} Print / Save PDF</button>
   `);
@@ -3307,6 +3378,7 @@ function renderReports(c){
     const rm = document.getElementById('rep-month'); if(rm) rm.addEventListener('change', e=>{ s.month=e.target.value; s.chartsGenerated=false; renderReports(c); });
     const rrs = document.getElementById('rep-range-start'); if(rrs) rrs.addEventListener('change', e=>{ s.rangeStart=e.target.value; s.chartsGenerated=false; renderReports(c); });
     const rre = document.getElementById('rep-range-end'); if(rre) rre.addEventListener('change', e=>{ s.rangeEnd=e.target.value; s.chartsGenerated=false; renderReports(c); });
+    document.getElementById('edit-signatories-btn').addEventListener('click', ()=>openSignatoriesModal(()=>renderReports(c)));
     document.getElementById('export-csv-btn').addEventListener('click', exportReportCsv);
     document.getElementById('print-pdf-btn').addEventListener('click', ()=>window.print());
   };
@@ -3354,12 +3426,13 @@ function renderReports(c){
     ? `<button class="btn" data-show-all style="padding:3px 10px;font-size:11px;">Show all charts</button>`
     : `<button class="btn" data-isolate="${key}" style="padding:3px 10px;font-size:11px;">⛶ Isolate</button>`;
 
-  // Reports are always broken down per month for the current scope, in
-  // addition to whatever period filter is selected above. This scans every
-  // record that scope has ever had — using the resolved month/year (date, or
-  // a month mentioned in the note/description/category) — so it doesn't
-  // matter whether a transaction's date field precisely matches the month it
-  // actually covers.
+  // The monthly breakdown table below is scoped to whatever period/range is
+  // selected above (inc/exp, already filtered) — not the full history —
+  // so picking "Custom range" or a single year actually limits every part
+  // of the report, not just the stat cards and record list. scopeInc/scopeExp
+  // stay as the *unfiltered* per-scope history because the "Full year"/"All
+  // time" bar and trend charts further down need every record to resolve
+  // their own month/year buckets independently of this table.
   const scopeInc = db.income.filter(i=>unitIds.includes(i.unitId));
   const scopeExp = db.expenses.filter(e=>unitIds.includes(e.unitId));
   const monthlyMap = {};
@@ -3370,8 +3443,8 @@ function renderReports(c){
     if(!monthlyMap[k]) monthlyMap[k] = {year:p.year, month:p.month, inc:0, exp:0};
     monthlyMap[k][field] += parseFloat(entry.amount)||0;
   };
-  scopeInc.forEach(i=>bumpMonthly(i,'inc'));
-  scopeExp.forEach(e=>bumpMonthly(e,'exp'));
+  inc.forEach(i=>bumpMonthly(i,'inc'));
+  exp.forEach(e=>bumpMonthly(e,'exp'));
   const monthlyKeys = Object.keys(monthlyMap).sort((a,b)=>b.localeCompare(a));
   const monthlyRowsHtml = monthlyKeys.length
     ? monthlyKeys.map(k=>{
@@ -3382,7 +3455,11 @@ function renderReports(c){
           <td class="amt neg">${fmtMoney(r.exp)}</td><td class="amt ${net>=0?'pos':'neg'}">${fmtMoney(net)}</td>
           <td>${margin.toFixed(1)}%</td></tr>`;
       }).join('')
-    : `<tr><td colspan="5" class="empty-state">No records for this scope.</td></tr>`;
+    : `<tr><td colspan="5" class="empty-state">No records for this scope${s.period==='all'?'':' and period'}.</td></tr>`;
+
+  const sigRows = (db.settings.reportSignatories && db.settings.reportSignatories.length)
+    ? db.settings.reportSignatories
+    : [{name:'',title:''},{name:'',title:''}];
 
   const out = document.getElementById('report-output');
   out.innerHTML = `
@@ -3459,12 +3536,24 @@ function renderReports(c){
       </div>
     </div>
     <div class="card">
-      <div class="card-head"><h3>Monthly breakdown — ${escapeHtml(scopeLabel)}</h3></div>
+      <div class="card-head"><h3>Monthly breakdown — ${escapeHtml(scopeLabel)} <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(${periodLabel})</span></h3></div>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Month</th><th>Income</th><th>Expenses</th><th>Net</th><th>Margin</th></tr></thead>
           <tbody>${monthlyRowsHtml}</tbody>
         </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Signatories</h3></div>
+      <div class="sig-grid">
+        ${sigRows.map(r=>`
+          <div class="sig-block">
+            <div class="sig-line"></div>
+            <div class="sig-name">${escapeHtml(r.name)||'&nbsp;'}</div>
+            <div class="sig-title">${escapeHtml(r.title)||'&nbsp;'}</div>
+          </div>
+        `).join('')}
       </div>
     </div>
   `;
