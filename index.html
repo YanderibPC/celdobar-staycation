@@ -403,6 +403,33 @@ function defaultDb(){
     settings:{ useSheets:false, gasUrl:'', lastSync:null, reportSignatories:[] } };
 }
 
+let STORAGE_BROKEN = false;
+
+function showStorageWarningBanner(msg){
+  let banner = document.getElementById('storage-warning-banner');
+  if(!banner){
+    banner = document.createElement('div');
+    banner.id = 'storage-warning-banner';
+    banner.style.cssText = 'position:sticky;top:0;left:0;right:0;z-index:9999;background:#a3271b;color:#fff;padding:10px 16px;font:600 13px/1.4 Inter,sans-serif;text-align:center;';
+    document.body.prepend(banner);
+  }
+  banner.textContent = msg;
+}
+
+function checkStorageWorks(){
+  // Actually write-then-read a probe value, since some browsers (Safari
+  // private mode, strict tracking-prevention, some in-app browsers) let
+  // localStorage.setItem() run without throwing but silently no-op, so a
+  // try/catch around setItem alone isn't enough to detect the failure.
+  try{
+    const probeKey = '__storage_probe__';
+    localStorage.setItem(probeKey, '1');
+    const ok = localStorage.getItem(probeKey) === '1';
+    localStorage.removeItem(probeKey);
+    return ok;
+  }catch(e){ return false; }
+}
+
 function loadLocal(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -411,7 +438,22 @@ function loadLocal(){
   return null;
 }
 function saveLocal(){
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }catch(e){ console.warn('local save failed', e); }
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+    // Confirm it actually landed — setItem can silently no-op in some
+    // locked-down browser storage modes instead of throwing.
+    if(localStorage.getItem(STORAGE_KEY) === null){ throw new Error('write did not persist'); }
+    if(STORAGE_BROKEN){
+      STORAGE_BROKEN = false;
+      const banner = document.getElementById('storage-warning-banner');
+      if(banner) banner.remove();
+    }
+  }catch(e){
+    console.warn('local save failed', e);
+    STORAGE_BROKEN = true;
+    toast('⚠️ Could not save — your change was NOT stored. See the red banner at top.', 'error');
+    showStorageWarningBanner('⚠️ Your browser is blocking this site\'s storage, so nothing you add right now is being saved. Try a different browser, disable private/incognito mode or strict tracking protection for this site, or make sure storage isn\'t full.');
+  }
 }
 
 const pushRemote = debounce(async function(){
@@ -2013,6 +2055,7 @@ function openBuildingForm(building){
 }
 
 function openUnitForm(unit, presetBuildingId){
+  if(db.buildings.length===0){ toast('Add a building first before adding units.','error'); return; }
   openFormModal({
     title: unit? 'Edit unit' : 'Add unit',
     fields:[
