@@ -2616,7 +2616,7 @@ function renderExpenses(c){
   if(s.unit!=='all') list = list.filter(e=>e.unitId===s.unit);
   if(s.category && s.category!=='all') list = list.filter(e=>e.category===s.category);
   list = filterByPeriod(list, s.year, s.month);
-  list.sort((a,b)=> b.date.localeCompare(a.date));
+  list.sort((a,b)=> String(b.date||'').localeCompare(String(a.date||'')));
 
   const totalAmt = sum(list,'amount');
   const auditGaps = s.kind==='constant' ? auditConstantCoverage(filteredUnits, s.year) : [];
@@ -2816,7 +2816,7 @@ function renderIncome(c){
   let list = db.income.filter(i=> filteredUnits.some(u=>u.id===i.unitId));
   if(s.unit!=='all') list = list.filter(i=>i.unitId===s.unit);
   list = filterByPeriod(list, s.year, s.month);
-  list.sort((a,b)=> (b.timestamp||b.date).localeCompare(a.timestamp||a.date));
+  list.sort((a,b)=> String(b.timestamp||b.date||'').localeCompare(String(a.timestamp||a.date||'')));
   const totalAmt = sum(list,'amount');
 
   c.innerHTML = `
@@ -4406,12 +4406,26 @@ function mapRawRows(rows, hint){
       if(m){ unitText = m.name; matchedExistingUnit = true; }
       else { unitText = hint.nameHint.trim(); unitTextFromHintOnly = true; }
     }
+    // Last resort: no header, no match against an existing unit, and no
+    // usable sheet/file hint — but the row still has an unclaimed leading
+    // text cell in the exact "Unit, Date, Amount, Category, Description"
+    // shape this importer's own placeholder suggests. Without this, a row
+    // for a unit that simply doesn't exist yet always reported "no unit
+    // detected" while that unit's name silently got misread as the
+    // category below instead of being offered as a new unit to create.
+    if(!unitText && colMap.unit===undefined && matchedUnitCellIdx===-1 && cells.length>=3){
+      const first = cells[0];
+      if(first && !dateRe.test(first) && !moneyRe.test(first.replace(/\s/g,''))){
+        unitText = first;
+        matchedUnitCellIdx = 0;
+      }
+    }
     if(!buildingText && hintIsUsable){
       const bm = findBuildingMatch(hint.nameHint);
       if(bm) buildingText = bm.name;
     }
     if(!category && !colMap.category){
-      const nonDateAmount = cells.filter(c=>c!==date && c!==amount);
+      const nonDateAmount = cells.filter((c,ci)=> c!==date && c!==amount && ci!==matchedUnitCellIdx);
       category = nonDateAmount.find(c=>isNaN(parseFloat(c))) || 'Imported';
     }
 
@@ -4678,6 +4692,17 @@ async function initApp(){
   // keyboard: esc closes modal
   document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
 }
+
+// Surface any uncaught error or promise rejection as a visible banner —
+// otherwise a render function crashing partway through (e.g. one malformed
+// record) silently leaves every button on that screen unwired, and it looks
+// like "nothing works" with zero clue why.
+window.addEventListener('error', (e)=>{
+  showStorageWarningBanner('⚠️ Something broke: ' + (e.message||'unknown error') + (e.filename?` (line ${e.lineno})`:'') + ' — try refreshing. If it keeps happening, screenshot this banner.');
+});
+window.addEventListener('unhandledrejection', (e)=>{
+  showStorageWarningBanner('⚠️ Something broke: ' + (e.reason && e.reason.message || String(e.reason)) + ' — try refreshing. If it keeps happening, screenshot this banner.');
+});
 
 initApp();
 </script>
