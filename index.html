@@ -2285,7 +2285,7 @@ function auditConstantCoverage(units, yearFilter){
       if(missing.length) gaps.push({unitId:u.id, year, month, missing});
     });
   });
-  return gaps.sort((a,b)=> a.year-b.year || a.month-b.month || (getUnit(a.unitId)?.name||'').localeCompare(getUnit(b.unitId)?.name||''));
+  return gaps.sort((a,b)=> a.year-b.year || a.month-b.month || String(getUnit(a.unitId)?.name||'').localeCompare(String(getUnit(b.unitId)?.name||'')));
 }
 
 /* Only "Subscriptions (Wi-fi/Streaming)" and "Lease" are treated as constant
@@ -2524,7 +2524,7 @@ function findDuplicateGroups(list){
     if(!groups.has(key)) groups.set(key, []);
     groups.get(key).push(e);
   });
-  return Array.from(groups.values()).filter(g=>g.length>1).sort((a,b)=> b[0].date.localeCompare(a[0].date));
+  return Array.from(groups.values()).filter(g=>g.length>1).sort((a,b)=> String(b[0].date||'').localeCompare(String(a[0].date||'')));
 }
 
 /* Detect & review duplicates modal — scans the *entire* income or expense
@@ -2539,7 +2539,7 @@ function openDuplicatesModal(kind, onDone){
     const groups = findDuplicateGroups(list);
     const body = groups.length ? groups.map((g,gi)=>{
       const u = getUnit(g[0].unitId);
-      const sorted = g.slice().sort((a,b)=> (b.timestamp||b.date).localeCompare(a.timestamp||a.date));
+      const sorted = g.slice().sort((a,b)=> String(b.timestamp||b.date||'').localeCompare(String(a.timestamp||a.date||'')));
       return `<div class="dup-group" style="border:1px solid var(--border,rgba(0,0,0,.12));border-radius:10px;padding:12px;margin-bottom:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
           <strong>${escapeHtml(u?u.name:'—')} · ${fmtDate(g[0].date)} · ${fmtMoney(g[0].amount)}</strong>
@@ -2583,7 +2583,7 @@ function openDuplicatesModal(kind, onDone){
       btn.addEventListener('click', ()=>{
         const g = groups[parseInt(btn.dataset.keepFirst,10)];
         if(!g) return;
-        const sorted = g.slice().sort((a,b)=> (b.timestamp||b.date).localeCompare(a.timestamp||a.date));
+        const sorted = g.slice().sort((a,b)=> String(b.timestamp||b.date||'').localeCompare(String(a.timestamp||a.date||'')));
         const toDelete = sorted.slice(1).map(e=>e.id);
         if(isIncome) db.income = db.income.filter(x=> !toDelete.includes(x.id));
         else db.expenses = db.expenses.filter(x=> !toDelete.includes(x.id));
@@ -3570,7 +3570,7 @@ function renderReports(c){
           <thead><tr><th>Date</th><th>Type</th><th>Unit</th><th>Category / Note</th><th>Amount</th></tr></thead>
           <tbody>
           ${[...inc.map(i=>({...i,__t:'Income',cat:i.note||'Gross income'})), ...exp.map(e=>({...e,__t:'Expense',cat:e.category}))]
-            .sort((a,b)=>b.date.localeCompare(a.date))
+            .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')))
             .map(x=>`<tr><td>${fmtDate(x.date)}</td><td><span class="tag ${x.__t==='Income'?'constant':'variable'}">${x.__t}</span></td>
               <td>${escapeHtml(getUnit(x.unitId)?.name||'—')}</td><td>${escapeHtml(x.cat)}</td>
               <td class="amt ${x.__t==='Income'?'pos':'neg'}">${fmtMoney(x.amount)}</td></tr>`).join('') || `<tr><td colspan="5" class="empty-state">No records for this scope/period.</td></tr>`}
