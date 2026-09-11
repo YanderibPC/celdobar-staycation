@@ -456,8 +456,8 @@ function saveLocal(){
   }
 }
 
-const pushRemote = debounce(async function(){
-  if(!db.settings.useSheets || !db.settings.gasUrl) return;
+async function pushRemoteNow(){
+  if(!db.settings.useSheets || !db.settings.gasUrl) return false;
   try{
     const res = await fetch(db.settings.gasUrl, {
       method:'POST',
@@ -467,13 +467,17 @@ const pushRemote = debounce(async function(){
       }})
     });
     const j = await res.json().catch(()=>({status:'ok'}));
+    if(j && j.status==='error'){ console.warn('sheets push rejected', j.message); updateSyncIndicator(false); return false; }
     db.settings.lastSync = new Date().toISOString();
     updateSyncIndicator(true);
+    return true;
   }catch(e){
     console.warn('sheets push failed', e);
     updateSyncIndicator(false);
+    return false;
   }
-}, 1200);
+}
+const pushRemote = debounce(pushRemoteNow, 1200);
 
 async function pullRemote(){
   if(!db.settings.useSheets || !db.settings.gasUrl) return false;
@@ -3859,7 +3863,10 @@ function renderSettings(c){
     db.settings.useSheets = true;
     if(!db.settings.gasUrl){ toast('Enter a Web App URL first','error'); return; }
     toast('Pushing snapshot…');
-    pushRemote();
+    const ok = await pushRemoteNow();
+    saveLocal();
+    if(ok){ toast('Snapshot pushed to Sheets'); renderSettings(c); }
+    else toast('Push failed — check the URL/deployment and your connection','error');
   });
   document.getElementById('open-import-btn').addEventListener('click', openSmartImport);
   document.getElementById('export-all-btn').addEventListener('click', ()=>{
@@ -4697,11 +4704,23 @@ async function initApp(){
 // otherwise a render function crashing partway through (e.g. one malformed
 // record) silently leaves every button on that screen unwired, and it looks
 // like "nothing works" with zero clue why.
+// Generic network-failure messages are deliberately excluded: Google Sheets
+// sync already reports its own failures via the sidebar's "Sync error" dot
+// (see updateSyncIndicator), and a bare "fetch failed" message is also what
+// browser extensions on the same page throw for their own unrelated
+// requests — surfacing either as an app crash is noise, not signal.
+function isIgnorableNetworkNoise(msg){
+  const m = String(msg||'').toLowerCase();
+  return m.includes('failed to fetch') || m.includes('networkerror') || m.includes('load failed');
+}
 window.addEventListener('error', (e)=>{
+  if(isIgnorableNetworkNoise(e.message)) return;
   showStorageWarningBanner('⚠️ Something broke: ' + (e.message||'unknown error') + (e.filename?` (line ${e.lineno})`:'') + ' — try refreshing. If it keeps happening, screenshot this banner.');
 });
 window.addEventListener('unhandledrejection', (e)=>{
-  showStorageWarningBanner('⚠️ Something broke: ' + (e.reason && e.reason.message || String(e.reason)) + ' — try refreshing. If it keeps happening, screenshot this banner.');
+  const msg = (e.reason && e.reason.message) || String(e.reason);
+  if(isIgnorableNetworkNoise(msg)) return;
+  showStorageWarningBanner('⚠️ Something broke: ' + msg + ' — try refreshing. If it keeps happening, screenshot this banner.');
 });
 
 initApp();
